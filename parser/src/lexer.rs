@@ -34,8 +34,7 @@ impl SpannedToken<'_> {
 pub enum Token<'input> {
     // Keywords
     Fun,
-    Val,
-    Var,
+    Let,
     If,
     Else,
     Elif,
@@ -74,6 +73,7 @@ pub enum Token<'input> {
     GreaterThan,
     LessThanEquals,
     GreaterThanEquals,
+    Not,
     // Constants
     Number(&'input str),
     String(&'input str),
@@ -173,7 +173,7 @@ impl<'input> Lexer<'input> {
                             return Some(SpannedToken::new(start, next + '='.len_utf8(), Token::NotEquals));
                         }
                     }
-                    return None
+                    return Some(SpannedToken::new(start, start + '!'.len_utf8(), Token::Not));
                 }
                 '<' => {
                     if let Some((next, ch)) = self.peek() {
@@ -207,6 +207,29 @@ impl<'input> Lexer<'input> {
                             just_found_escape = true;
                         }
                         if *ch == '"' && !found_escape {
+                            end = *next;
+                            self.next_char();
+                            break;
+                        } else if found_escape && !just_found_escape {
+                            found_escape = false;
+                        }
+                        self.next_char();
+                    }
+                    let string = &self.input[start..end];
+                    return Some(SpannedToken::new(start, end, Token::String(string)));
+                }
+                '\'' => {
+                    let start = start + '\''.len_utf8();
+                    let mut end = start + '\''.len_utf8();
+                    let mut found_escape = false;
+                    let mut just_found_escape = false;
+                    while let Some((next, ch)) = self.peek() {
+                        just_found_escape = false;
+                        if *ch == '\\' {
+                            found_escape = true;
+                            just_found_escape = true;
+                        }
+                        if *ch == '\'' && !found_escape {
                             end = *next;
                             self.next_char();
                             break;
@@ -252,8 +275,7 @@ impl<'input> Lexer<'input> {
                      let string = &self.input[start..end];
                      return match string {
                          "fun" => Some(SpannedToken::new(start, end, Token::Fun)),
-                         "val" => Some(SpannedToken::new(start, end, Token::Val)),
-                         "var" => Some(SpannedToken::new(start, end, Token::Var)),
+                         "let" => Some(SpannedToken::new(start, end, Token::Let)),
                          "if" => Some(SpannedToken::new(start, end, Token::If)),
                          "else" => Some(SpannedToken::new(start, end, Token::Else)),
                          "elif" => Some(SpannedToken::new(start, end, Token::Elif)),
