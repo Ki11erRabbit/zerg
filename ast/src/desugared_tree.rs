@@ -2,15 +2,8 @@ use crate::{Path, Span};
 
 #[derive(Debug, Clone)]
 pub struct File<'input> {
-    pub top_level_statements: Vec<TopLevelStatement<'input>>,
+    pub functions: Vec<Function<'input>>,
     pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum TopLevelStatement<'input> {
-    Import(Path<'input>),
-    ComptimeImport(Path<'input>),
-    Function(Function<'input>),
 }
 
 #[derive(Debug, Clone)]
@@ -18,23 +11,11 @@ pub struct Function<'input> {
     pub public: bool,
     pub comptime: bool,
     pub inline: bool,
-    pub kind: FunctionKind<'input>,
+    pub path: Path<'input>,
     pub arguments: FunctionArguments<'input>,
     pub return_type: Type<'input>,
     pub body: Block<'input>,
     pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum FunctionKind<'input> {
-    Named {
-        name: &'input str,
-        span: Span,
-    },
-    Operator {
-        operator: Operator,
-        span: Span,
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,20 +82,6 @@ pub enum Expression<'input> {
         value: Option<Box<Expression<'input>>>,
         span: Span,
     },
-    BinOp {
-        lhs: Box<Expression<'input>>,
-        rhs: Box<Expression<'input>>,
-        op: Operator,
-        span: Span,
-    },
-    Not {
-        value: Box<Expression<'input>>,
-        span: Span,
-    },
-    Negation {
-        value: Box<Expression<'input>>,
-        span: Span,
-    },
     Parenthesized {
         expr: Box<Expression<'input>>,
         span: Span,
@@ -132,33 +99,8 @@ pub enum Expression<'input> {
         span: Span,
     },
     FunctionCall {
-        name: &'input str,
+        name: Path<'input>,
         args: Vec<Expression<'input>>,
         span: Span,
     },
-    DottedFunctionCall {
-        name: &'input str,
-        args: Vec<Expression<'input>>,
-        span: Span,
-    },
-    OperatorFunctionCall {
-        name: &'input str,
-        args: Vec<Expression<'input>>,
-        span: Span,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Operator {
-    Plus,
-    Minus,
-    Multiply,
-    Divide,
-    Remainder,
-    Equals,
-    NotEquals,
-    GreaterThan,
-    LessThan,
-    GreaterThanEquals,
-    LessThanEquals,
 }

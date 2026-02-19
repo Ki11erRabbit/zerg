@@ -44,6 +44,7 @@ pub enum Token<'input> {
     Import,
     Public,
     Inline,
+    Lazy,
     Comptime,
     // Symbols
     OpenParen,
@@ -285,6 +286,7 @@ impl<'input> Lexer<'input> {
                          "import" => Some(SpannedToken::new(start, end, Token::Import)),
                          "pub" => Some(SpannedToken::new(start, end, Token::Public)),
                          "inline" => Some(SpannedToken::new(start, end, Token::Inline)),
+                         "lazy" => Some(SpannedToken::new(start, end, Token::Lazy)),
                          "comptime" => Some(SpannedToken::new(start, end, Token::Comptime)),
                          x => Some(SpannedToken::new(start, end, Token::Identifier(x))),
                      };
