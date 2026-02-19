@@ -6,6 +6,12 @@ pub struct File<'input> {
     pub span: Span,
 }
 
+impl<'input> File<'input> {
+    pub fn new(top_level_statements: Vec<TopLevelStatement<'input>>, span: Span) -> Self {
+        File { top_level_statements, span }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TopLevelStatement<'input> {
     Import(Path<'input>),
@@ -23,6 +29,68 @@ pub struct Function<'input> {
     pub return_type: Type<'input>,
     pub body: Block<'input>,
     pub span: Span,
+}
+
+impl<'input> Function<'input> {
+    pub fn new_comptime(
+        public: bool,
+        kind: FunctionKind<'input>,
+        arguments: FunctionArguments<'input>,
+        return_type: Type<'input>,
+        body: Block<'input>,
+        span: Span,
+    ) -> Self {
+        Self {
+            public,
+            comptime: true,
+            inline: false,
+            kind,
+            arguments,
+            return_type,
+            body,
+            span,
+        }
+    }
+
+    pub fn new_inline(
+        public: bool,
+        kind: FunctionKind<'input>,
+        arguments: FunctionArguments<'input>,
+        return_type: Type<'input>,
+        body: Block<'input>,
+        span: Span,
+    ) -> Self {
+        Self {
+            public,
+            comptime: false,
+            inline: true,
+            kind,
+            arguments,
+            return_type,
+            body,
+            span,
+        }
+    }
+
+    pub fn new_function(
+        public: bool,
+        kind: FunctionKind<'input>,
+        arguments: FunctionArguments<'input>,
+        return_type: Type<'input>,
+        body: Block<'input>,
+        span: Span,
+    ) -> Self {
+        Self {
+            public,
+            comptime: false,
+            inline: false,
+            kind,
+            arguments,
+            return_type,
+            body,
+            span,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,12 +111,24 @@ pub struct FunctionArguments<'input> {
     pub span: Span,
 }
 
+impl<'input> FunctionArguments<'input> {
+    pub fn new(arguments: Vec<FunctionArgument<'input>>, span: Span) -> Self {
+        FunctionArguments { arguments, span }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
     pub lazy: bool,
     pub name: &'input str,
     pub r#type: Type<'input>,
     pub span: Span,
+}
+
+impl<'input> FunctionArgument<'input> {
+    pub fn new(lazy: bool, name: &'input str, r#type: Type<'input>, span: Span) -> Self {
+        FunctionArgument { lazy, name, r#type, span }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -64,12 +144,16 @@ pub enum Type<'input> {
     F32(Span),
     F64(Span),
     String(Span),
-    Void(Span),
+    Unit(Span),
     Generic {
         name: &'input str,
         args: Vec<Type<'input>>,
         span: Span,
     },
+    Custom {
+        name: &'input str,
+        span: Span,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -78,12 +162,24 @@ pub struct Block<'input> {
     pub span: Span,
 }
 
+impl<'input> Block<'input> {
+    pub fn new(statements: Vec<Statement<'input>>, span: Span) -> Self {
+        Block { statements, span }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement<'input> {
     Let {
         name: &'input str,
         r#type: Type<'input>,
         expr: Expression<'input>,
+        span: Span,
+    },
+    Assignment {
+        target: Expression<'input>,
+        expr: Expression<'input>,
+        span: Span,
     },
     Expression {
         expr: Expression<'input>,
@@ -137,12 +233,13 @@ pub enum Expression<'input> {
         span: Span,
     },
     DottedFunctionCall {
+        base: Box<Expression<'input>>,
         name: &'input str,
         args: Vec<Expression<'input>>,
         span: Span,
     },
     OperatorFunctionCall {
-        name: &'input str,
+        operator: Operator,
         args: Vec<Expression<'input>>,
         span: Span,
     }
@@ -161,4 +258,6 @@ pub enum Operator {
     LessThan,
     GreaterThanEquals,
     LessThanEquals,
+    Or,
+    And,
 }

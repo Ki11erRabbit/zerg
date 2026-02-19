@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 lalrpop-util = { version = "0.23.0", default-features = false }
+ast = { workspace = true }
 
 [build-dependencies]
 lalrpop = { version = "0.23.0", default-features = false }

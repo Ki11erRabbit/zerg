@@ -1,0 +1,350 @@
+use crate::lexer;
+use ast::parse_tree::*;
+use ast::{Span, Path, PathSegment};
+
+grammar<'input>(input: &'input str);
+
+extern {
+    type Location = usize;
+    type Error = lexer::LexerError;
+
+    enum lexer::Token<'input> {
+        "fun" => lexer::Token::Fun,
+        "let" => lexer::Token::Let,
+        "if" => lexer::Token::If,
+        "else" => lexer::Token::Else,
+        "elif" => lexer::Token::Elif,
+        "while" => lexer::Token::While,
+        "for" => lexer::Token::For,
+        "return" => lexer::Token::Return,
+        "import" => lexer::Token::Import,
+        "pub" => lexer::Token::Public,
+        "inline" => lexer::Token::Inline,
+        "lazy" => lexer::Token::Lazy,
+        "comptime" => lexer::Token::Comptime,
+        "(" => lexer::Token::OpenParen,
+        ")" => lexer::Token::CloseParen,
+        "{" => lexer::Token::OpenBrace,
+        "}" => lexer::Token::CloseBrace,
+        "[" => lexer::Token::OpenBracket,
+        "]" => lexer::Token::CloseBracket,
+        "." => lexer::Token::Period,
+        "," => lexer::Token::Comma,
+        ";" => lexer::Token::Semicolon,
+        ":" => lexer::Token::Colon,
+        "::" => lexer::Token::Scope,
+        "@" => lexer::Token::At,
+        "=" => lexer::Token::Assignment,
+        "+" => lexer::Token::Plus,
+        "-" => lexer::Token::Minus,
+        "*" => lexer::Token::Multiply,
+        "/" => lexer::Token::Divide,
+        "%" => lexer::Token::Remainder,
+        "||" => lexer::Token::Or,
+        "&&" => lexer::Token::And,
+        "==" => lexer::Token::Equals,
+        "!=" => lexer::Token::NotEquals,
+        "<" => lexer::Token::LessThan,
+        ">" => lexer::Token::GreaterThan,
+        "<=" => lexer::Token::LessThanEquals,
+        ">=" => lexer::Token::GreaterThanEquals,
+        "!" => lexer::Token::Not,
+        Number => lexer::Token::Number(<&'input str>),
+        String => lexer::Token::String(<&'input str>),
+        Identifier => lexer::Token::Identifier(<&'input str>),
+    }
+}
+
+pub File: File<'input> = {
+    <start: @L> <stmts:(<ToplevelStatement>)*> <end: @R> => {
+        File::new(stmts, Span::new(start, end))
+    }
+};
+
+ToplevelStatement: TopLevelStatement<'input> = {
+    <import:Import> => TopLevelStatement::Import(import),
+    <import:ComptimeImport> => TopLevelStatement::ComptimeImport(import),
+    <function:Function> => TopLevelStatement::Function(function),
+};
+
+PathSegment: PathSegment<'input> = {
+    <start: @L> <id:Identifier> <end: @R> => {
+        PathSegment::new(id, Span::new(start, end))
+    }
+};
+
+Path: Path<'input> = {
+    <start: @L> <id: PathSegment> <rest:("::" <PathSegment>)*> <end: @R> => {
+        let mut segments = vec![id];
+        for item in rest {
+            segments.push(item);
+        }
+
+        Path::new(segments, Span::new(start, end))
+    },
+};
+
+Import: Path<'input> = {
+    "import" <path:Path> => path,
+};
+
+ComptimeImport: Path<'input> = {
+    "comptime" <import: Import> => import,
+};
+
+Function: Function<'input> = {
+    <start: @L> <vis:("pub")?> "inline" "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_inline(public, kind, args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "comptime" "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_comptime(public, kind, args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_function(public, kind, args, ret_type, block, Span::new(start, end))
+    },
+};
+
+FunctionKind: FunctionKind<'input> = {
+    <start: @L> <name:Identifier> <end: @R> => FunctionKind::Named { name, span: Span::new(start, end) },
+    <start: @L> "(" <operator:Operator> ")" <end: @R> => FunctionKind::Operator { operator, span: Span::new(start, end) },
+};
+
+FunctionArgument: FunctionArgument<'input> = {
+    <start: @L> <lazy:("lazy")?> <id:Identifier> ":" <ty: Type> <end: @R> => {
+        FunctionArgument::new(lazy.is_some(), id, ty, Span::new(start, end))
+    },
+};
+
+FunctionArguments: FunctionArguments<'input> = {
+    <start: @L> "(" <arg: (<FunctionArgument>)?> ")" <end: @R> => {
+        if let Some(arg) = arg {
+            FunctionArguments::new(vec![arg], Span::new(start, end))
+        } else {
+            FunctionArguments::new(Vec::new(), Span::new(start, end))
+        }
+    },
+    <start: @L> "(" <arg:FunctionArgument> <rest: ("," <FunctionArgument>)+> (",")? ")" <end: @R> => {
+        let mut args = vec![arg];
+        for item in rest {
+            args.push(item);
+        }
+        FunctionArguments::new(args, Span::new(start, end))
+    },
+};
+
+Type: Type<'input> = {
+    <start: @L> <id:Identifier> <end: @R> => {
+        match id {
+            "u8" => Type::U8(Span::new(start, end)),
+            "i8" => Type::I8(Span::new(start, end)),
+            "u16" => Type::U16(Span::new(start, end)),
+            "i16" => Type::I16(Span::new(start, end)),
+            "u32" => Type::U32(Span::new(start, end)),
+            "i32" => Type::I32(Span::new(start, end)),
+            "u64" => Type::U64(Span::new(start, end)),
+            "i64" => Type::I64(Span::new(start, end)),
+            "f32" => Type::F32(Span::new(start, end)),
+            "f64" => Type::F64(Span::new(start, end)),
+            "string" => Type::String(Span::new(start, end)),
+            "unit" => Type::Unit(Span::new(start, end)),
+            name => Type::Custom { name, span: Span::new(start, end) }
+        }
+    },
+    <start: @L> <name:Identifier> "<" <ty:Type> <tys: ("," <Type>)*> ">" <end: @R> => {
+        let mut args = vec![ty];
+        for item in tys {
+            args.push(item);
+        }
+        Type::Generic { name, args, span: Span::new(start, end) }
+    }
+};
+
+Block: Block<'input> = {
+    <start: @L> "{" <stmts: (<Statement>)*> "}" <end: @R> => {
+        Block::new(stmts, Span::new(start, end))
+    }
+};
+
+Statement: Statement<'input> = {
+    <start: @L> "let" <name: Identifier> ":" <r#type: Type> "=" <expr: Expression> ";" <end: @R> => {
+        Statement::Let { name, r#type, expr, span: Span::new(start, end) }
+    },
+    <start: @L> <target: Expression> "=" <expr: Expression> ";" <end: @R> => {
+        Statement::Assignment { target, expr, span: Span::new(start, end) }
+    },
+    <start: @L> "comptime" <block: Block> <end: @R> => {
+        Statement::Comptime { block, span: Span::new(start, end) }
+    },
+    <start: @L> <expr: Expression> ";" <end: @R> => {
+        Statement::Expression { expr, span: Span::new(start, end) }
+    },
+};
+
+Expression: Expression<'input> = {
+    <start: @L> "return" <value:(<DisjunctionExpr>)?> <end: @R> => {
+        Expression::Return { value: value.map(|x| Box::new(x)), span: Span::new(start, end) }
+    },
+    <expr:DisjunctionExpr> => expr,
+};
+
+DisjunctionExpr: Expression<'input> = {
+    <start: @L> <lhs: ConjunctionExpr> "||" <rhs: DisjunctionExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Or,
+            span: Span::new(start, end),
+        }
+    },
+    <expr: ConjunctionExpr> => expr,
+};
+
+ConjunctionExpr: Expression<'input> = {
+    <start: @L> <lhs: AddExpr> "&&" <rhs: ConjunctionExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::And,
+            span: Span::new(start, end),
+        }
+    },
+    <expr: AddExpr> => expr,
+};
+
+AddExpr: Expression<'input> = {
+    <start: @L> <lhs: MultiplyExpr> "+" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Plus,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: MultiplyExpr> "-" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Minus,
+            span: Span::new(start, end),
+        }
+    },
+    <expr: MultiplyExpr> => expr,
+};
+
+MultiplyExpr: Expression<'input> = {
+    <start: @L> <lhs: UnaryExpr> "*" <rhs: MultiplyExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Multiply,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: UnaryExpr> "/" <rhs: MultiplyExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Divide,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: UnaryExpr> "%" <rhs: MultiplyExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Remainder,
+            span: Span::new(start, end),
+        }
+    },
+    <expr: UnaryExpr> => expr,
+};
+
+UnaryExpr: Expression<'input> = {
+    <start: @L> "-" <expr: FuncExpr> <end: @R> => {
+        Expression::Negation { value: Box::new(expr), span: Span::new(start, end) }
+    },
+    <start: @L> "!" <expr: FuncExpr> <end: @R> => {
+        Expression::Not { value: Box::new(expr), span: Span::new(start, end) }
+    },
+    <expr: FuncExpr> => expr,
+};
+
+FuncExpr: Expression<'input> = {
+    <start: @L> <name:Identifier> "(" ")" <end: @R> => {
+        Expression::FunctionCall { name, args: Vec::new(), span: Span::new(start, end) }
+    },
+    <start: @L> <name:Identifier> "(" <arg: Expression> <rest:("," <Expression> )*> ")" <end: @R> => {
+        let mut args = vec![arg];
+        for item in rest {
+            args.push(item);
+        }
+        Expression::FunctionCall { name, args, span: Span::new(start, end) }
+    },
+    <start: @L> "(" <operator:Operator> ")" "(" ")" <end: @R> => {
+        Expression::OperatorFunctionCall { operator, args: Vec::new(), span: Span::new(start, end) }
+    },
+    <start: @L> "(" <operator:Operator> ")" "(" <arg: Expression> <rest:("," <Expression> )*> ")" <end: @R> => {
+        let mut args = vec![arg];
+        for item in rest {
+            args.push(item);
+        }
+        Expression::OperatorFunctionCall { operator, args, span: Span::new(start, end) }
+    },
+    <start: @L> <base: FuncExpr> "." <name: Identifier> <end: @R> => {
+        Expression::DottedFunctionCall {
+            base: Box::new(base),
+            name,
+            args: Vec::new(),
+            span: Span::new(start, end)
+        }    
+    },
+    <start: @L> <base: FuncExpr> "." <name: Identifier> "(" ")" <end: @R> => {
+        Expression::DottedFunctionCall {
+            base: Box::new(base),
+            name,
+            args: Vec::new(),
+            span: Span::new(start, end)
+        }    
+    },
+    <start: @L> <base: FuncExpr> "." <name: Identifier> "(" <arg: Expression> <rest:("," <Expression> )*> ")" <end: @R> => {
+        let mut args = vec![arg];
+        for item in rest {
+            args.push(item);
+        }
+        Expression::DottedFunctionCall {
+            base: Box::new(base),
+            name,
+            args,
+            span: Span::new(start, end)
+        }    
+    },
+    <expr:BaseExpr> => expr,
+};
+
+
+BaseExpr: Expression<'input> = {
+    <start: @L> <name:Identifier> <end: @R> => Expression::Variable { name, span: Span::new(start, end) },
+    <start: @L> <value:Number> <end: @R> => Expression::ConstantNumber { value, span: Span::new(start, end) },
+    <start: @L> <value:String> <end: @R> => Expression::ConstantString { value, span: Span::new(start, end) },
+    <start: @L> "(" <expr:Expression> ")" <end: @R> => Expression::Parenthesized { expr: Box::new(expr), span: Span::new(start, end) },
+};
+
+Operator: Operator = {
+    "+" => Operator::Plus,
+    "-" => Operator::Minus,
+    "*" => Operator::Multiply,
+    "/" => Operator::Divide,
+    "%" => Operator::Remainder,
+    "==" => Operator::Equals,
+    "!=" => Operator::NotEquals,
+    ">" => Operator::GreaterThan,
+    "<" => Operator::LessThan,
+    ">=" => Operator::GreaterThanEquals,
+    "<=" => Operator::LessThanEquals,
+};
