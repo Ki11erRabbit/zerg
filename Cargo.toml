@@ -1,5 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["ast","parser","zergc"]
+members = ["ast", "backend","parser", "typechecker","zergc"]
 
 [workspace.dependencies]
+ast = { path = "./ast" }
+parser = { path = "./parser" }
+typechecker = { path = "./typechecker" }
+backend = { path = "./backend" }
