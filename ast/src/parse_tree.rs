@@ -2,6 +2,7 @@ use crate::{Path, Span};
 
 pub struct File<'input> {
     pub imports: Vec<Path<'input>>,
+    pub comptime_imports: Vec<Path<'input>>,
     pub functions: Vec<Function<'input>>,
     pub span: Span,
 }
@@ -113,6 +114,21 @@ pub enum Expression<'input> {
     },
     ConstantString {
         value: &'input str,
+        span: Span,
+    },
+    FunctionCall {
+        name: &'input str,
+        args: Vec<Expression<'input>>,
+        span: Span,
+    },
+    DottedFunctionCall {
+        name: &'input str,
+        args: Vec<Expression<'input>>,
+        span: Span,
+    },
+    OperatorFunctionCall {
+        name: &'input str,
+        args: Vec<Expression<'input>>,
         span: Span,
     }
 }
