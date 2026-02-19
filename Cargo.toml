@@ -1,5 +1,5 @@
 [workspace]
 resolver = "3"
-members = ["parser","zergc"]
+members = ["ast","parser","zergc"]
 
 [workspace.dependencies]
