@@ -126,50 +126,50 @@ impl<'input> Lexer<'input> {
         self.char_indices.peek()
     }
 
-    fn next_token(&mut self) -> Option<Result<SpannedToken<'input>, LexerError>> {
+    fn next_token(&mut self) -> Option<Result<(usize, Token<'input>, usize), LexerError>> {
         while let Some((start, ch)) = self.next_char() {
             match ch {
-                '(' => return Some(Ok(SpannedToken::new(start, start + ')'.len_utf8(), Token::OpenParen))),
-                ')' => return Some(Ok(SpannedToken::new(start, start + ')'.len_utf8(), Token::CloseParen))),
-                '{' => return Some(Ok(SpannedToken::new(start, start + '{'.len_utf8(), Token::OpenBrace))),
-                '}' => return Some(Ok(SpannedToken::new(start, start + '}'.len_utf8(), Token::CloseBrace))),
-                '[' => return Some(Ok(SpannedToken::new(start, start + '['.len_utf8(), Token::OpenBracket))),
-                ']' => return Some(Ok(SpannedToken::new(start, start + '['.len_utf8(), Token::CloseBracket))),
-                '.' => return Some(Ok(SpannedToken::new(start, start + '.'.len_utf8(), Token::Period))),
-                ',' => return Some(Ok(SpannedToken::new(start, start + ','.len_utf8(), Token::Comma))),
-                ';' => return Some(Ok(SpannedToken::new(start, start + ';'.len_utf8(), Token::Semicolon))),
+                '(' => return Some(Ok((start, Token::OpenParen,  start + ')'.len_utf8()))),
+                ')' => return Some(Ok((start, Token::CloseParen,  start + ')'.len_utf8()))),
+                '{' => return Some(Ok((start, Token::OpenBrace,  start + '{'.len_utf8()))),
+                '}' => return Some(Ok((start, Token::CloseBrace,  start + '}'.len_utf8()))),
+                '[' => return Some(Ok((start, Token::OpenBracket,  start + '['.len_utf8()))),
+                ']' => return Some(Ok((start, Token::CloseBracket,  start + '['.len_utf8()))),
+                '.' => return Some(Ok((start, Token::Period,  start + '.'.len_utf8()))),
+                ',' => return Some(Ok((start, Token::Comma,  start + ','.len_utf8()))),
+                ';' => return Some(Ok((start, Token::Semicolon,  start + ';'.len_utf8()))),
                 ':' => {
                     if let Some((next, ch)) = self.peek() {
                         if *ch == ':' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + ':'.len_utf8(), Token::Scope)));
+                            return Some(Ok((start, Token::Scope,  next + ':'.len_utf8())));
                         }
                     }
-                    return Some(Ok(SpannedToken::new(start, start + ':'.len_utf8(), Token::Colon)));
+                    return Some(Ok((start, Token::Colon,  start + ':'.len_utf8())));
                 }
-                '@' => return Some(Ok(SpannedToken::new(start, start + '@'.len_utf8(), Token::At))),
+                '@' => return Some(Ok((start, Token::At,  start + '@'.len_utf8()))),
                 '=' => {
                     if let Some((next, ch)) = self.peek() {
                         if *ch == '=' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '='.len_utf8(), Token::Equals)));
+                            return Some(Ok((start, Token::Equals,  next + '='.len_utf8())));
                         }
                     }
-                    return Some(Ok(SpannedToken::new(start, start + '='.len_utf8(), Token::Assignment)))
+                    return Some(Ok((start, Token::Assignment,  start + '='.len_utf8())))
                 },
-                '+' => return Some(Ok(SpannedToken::new(start, start + '+'.len_utf8(), Token::Plus))),
-                '-' => return Some(Ok(SpannedToken::new(start, start + '-'.len_utf8(), Token::Minus))),
-                '*' => return Some(Ok(SpannedToken::new(start, start + '*'.len_utf8(), Token::Multiply))),
-                '/' => return Some(Ok(SpannedToken::new(start, start + '/'.len_utf8(), Token::Divide))),
-                '%' => return Some(Ok(SpannedToken::new(start, start + '%'.len_utf8(), Token::Remainder))),
+                '+' => return Some(Ok((start, Token::Plus,  start + '+'.len_utf8()))),
+                '-' => return Some(Ok((start, Token::Minus,  start + '-'.len_utf8()))),
+                '*' => return Some(Ok((start, Token::Multiply,  start + '*'.len_utf8()))),
+                '/' => return Some(Ok((start, Token::Divide,  start + '/'.len_utf8()))),
+                '%' => return Some(Ok((start, Token::Remainder,  start + '%'.len_utf8()))),
                 '|' => {
                     if let Some((next, ch)) = self.peek() {
                         if *ch == '|' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '|'.len_utf8(), Token::Or)));
+                            return Some(Ok((start, Token::Or,  next + '|'.len_utf8())));
                         }
                     }
                     return Some(Err(LexerError::UnexpectedEOF));
@@ -179,7 +179,7 @@ impl<'input> Lexer<'input> {
                         if *ch == '&' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '&'.len_utf8(), Token::And)));
+                            return Some(Ok((start, Token::And,  next + '&'.len_utf8())));
                         }
                     }
                     return Some(Err(LexerError::UnexpectedEOF));
@@ -189,30 +189,30 @@ impl<'input> Lexer<'input> {
                         if *ch == '=' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '='.len_utf8(), Token::NotEquals)));
+                            return Some(Ok((start, Token::NotEquals,  next + '='.len_utf8())));
                         }
                     }
-                    return Some(Ok(SpannedToken::new(start, start + '!'.len_utf8(), Token::Not)));
+                    return Some(Ok((start, Token::Not,  start + '!'.len_utf8())));
                 }
                 '<' => {
                     if let Some((next, ch)) = self.peek() {
                         if *ch == '=' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '='.len_utf8(), Token::LessThanEquals)));
+                            return Some(Ok((start, Token::LessThanEquals,  next + '='.len_utf8())));
                         }
                     }
-                    return Some(Ok(SpannedToken::new(start, start + '<'.len_utf8(), Token::LessThan)));
+                    return Some(Ok((start, Token::LessThan,  start + '<'.len_utf8())));
                 }
                 '>' => {
                     if let Some((next, ch)) = self.peek() {
                         if *ch == '=' {
                             let next = *next;
                             self.next_char();
-                            return Some(Ok(SpannedToken::new(start, next + '='.len_utf8(), Token::GreaterThanEquals)));
+                            return Some(Ok((start, Token::GreaterThanEquals,  next + '='.len_utf8())));
                         }
                     }
-                    return Some(Ok(SpannedToken::new(start, start + '>'.len_utf8(), Token::GreaterThan)));
+                    return Some(Ok((start, Token::GreaterThan,  start + '>'.len_utf8())));
                 }
                 '"' => {
                     let start = start + '"'.len_utf8();
@@ -235,7 +235,7 @@ impl<'input> Lexer<'input> {
                         self.next_char();
                     }
                     let string = &self.input[start..end];
-                    return Some(Ok(SpannedToken::new(start, end, Token::String(string))));
+                    return Some(Ok((start, Token::String(string),  end)));
                 }
                 '\'' => {
                     let start = start + '\''.len_utf8();
@@ -258,7 +258,7 @@ impl<'input> Lexer<'input> {
                         self.next_char();
                     }
                     let string = &self.input[start..end];
-                    return Some(Ok(SpannedToken::new(start, end, Token::String(string))));
+                    return Some(Ok((start, Token::String(string),  end)));
                 }
                 '0'..='9' => {
                     let mut end = start;
@@ -274,7 +274,7 @@ impl<'input> Lexer<'input> {
                     }
                     let string = &self.input[start..end];
                     let token = Token::Number(string);
-                    return Some(Ok(SpannedToken::new(start, end, token)));
+                    return Some(Ok((start, token,  end)));
                 }
                 c if c.is_whitespace() => {
                     continue;
@@ -293,25 +293,32 @@ impl<'input> Lexer<'input> {
                      }
                      let string = &self.input[start..end];
                      return match string {
-                         "fun" => Some(Ok(SpannedToken::new(start, end, Token::Fun))),
-                         "let" => Some(Ok(SpannedToken::new(start, end, Token::Let))),
-                         "if" => Some(Ok(SpannedToken::new(start, end, Token::If))),
-                         "else" => Some(Ok(SpannedToken::new(start, end, Token::Else))),
-                         "elif" => Some(Ok(SpannedToken::new(start, end, Token::Elif))),
-                         "while" => Some(Ok(SpannedToken::new(start, end, Token::While))),
-                         "for" => Some(Ok(SpannedToken::new(start, end, Token::For))),
-                         "return" => Some(Ok(SpannedToken::new(start, end, Token::Return))),
-                         "import" => Some(Ok(SpannedToken::new(start, end, Token::Import))),
-                         "pub" => Some(Ok(SpannedToken::new(start, end, Token::Public))),
-                         "inline" => Some(Ok(SpannedToken::new(start, end, Token::Inline))),
-                         "lazy" => Some(Ok(SpannedToken::new(start, end, Token::Lazy))),
-                         "comptime" => Some(Ok(SpannedToken::new(start, end, Token::Comptime))),
-                         x => Some(Ok(SpannedToken::new(start, end, Token::Identifier(x)))),
+                         "fun" => Some(Ok((start, Token::Fun,  end))),
+                         "let" => Some(Ok((start, Token::Let,  end))),
+                         "if" => Some(Ok((start, Token::If,  end))),
+                         "else" => Some(Ok((start, Token::Else,  end))),
+                         "elif" => Some(Ok((start, Token::Elif,  end))),
+                         "while" => Some(Ok((start, Token::While,  end))),
+                         "for" => Some(Ok((start, Token::For,  end))),
+                         "return" => Some(Ok((start, Token::Return,  end))),
+                         "import" => Some(Ok((start, Token::Import,  end))),
+                         "pub" => Some(Ok((start, Token::Public,  end))),
+                         "inline" => Some(Ok((start, Token::Inline,  end))),
+                         "lazy" => Some(Ok((start, Token::Lazy,  end))),
+                         "comptime" => Some(Ok((start, Token::Comptime,  end))),
+                         x => Some(Ok((start, Token::Identifier(x),  end))),
                      };
                 }
                 c => return Some(Err(LexerError::InvalidCharacter(c)))
             }
         }
         None
+    }
+}
+
+impl<'input> Iterator for Lexer<'input> {
+    type Item = Result<(usize, Token<'input>, usize), LexerError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_token()
     }
 }
