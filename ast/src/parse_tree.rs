@@ -1,5 +1,6 @@
 use crate::{Path, Span};
 
+#[derive(Debug, Clone)]
 pub struct File<'input> {
     pub imports: Vec<Path<'input>>,
     pub comptime_imports: Vec<Path<'input>>,
@@ -7,6 +8,7 @@ pub struct File<'input> {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub struct Function<'input> {
     pub public: bool,
     pub comptime: bool,
@@ -18,6 +20,7 @@ pub struct Function<'input> {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub enum FunctionKind<'input> {
     Named {
         name: &'input str,
@@ -29,17 +32,20 @@ pub enum FunctionKind<'input> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct FunctionArguments<'input> {
     pub arguments: Vec<FunctionArgument<'input>>,
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
     pub name: &'input str,
     pub r#type: Type<'input>,
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub enum Type<'input> {
     U8(Span),
     I8(Span),
@@ -60,11 +66,13 @@ pub enum Type<'input> {
     },
 }
 
+#[derive(Debug, Clone)]
 pub struct Block<'input> {
     pub statements: Vec<Statement<'input>>,
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
 pub enum Statement<'input> {
     Let {
         name: &'input str,
@@ -76,11 +84,12 @@ pub enum Statement<'input> {
         span: Span,
     },
     Comptime {
-        statements: Vec<Statement<'input>>,
+        block: Block<'input>,
         span: Span,
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum Expression<'input> {
     Return {
         value: Option<Box<Expression<'input>>>,
@@ -133,6 +142,7 @@ pub enum Expression<'input> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
     Plus,
     Minus,

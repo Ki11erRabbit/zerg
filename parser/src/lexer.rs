@@ -4,7 +4,7 @@ use std::str::CharIndices;
 pub struct SpannedToken<'input> {
     start: usize,
     end: usize,
-    token: Token<'input>
+    pub token: Token<'input>
 }
 
 impl<'input> SpannedToken<'input> {

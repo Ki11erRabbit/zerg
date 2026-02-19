@@ -1,5 +1,6 @@
 pub mod parse_tree;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -11,6 +12,7 @@ impl Span {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct PathSegment<'input> {
     pub segment: &'input str,
     pub span: Span,
@@ -22,8 +24,9 @@ impl<'input> PathSegment<'input> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Path<'input> {
-    segments: Vec<PathSegment<'input>>,
+    pub segments: Vec<PathSegment<'input>>,
     pub span: Span,
 }
 
