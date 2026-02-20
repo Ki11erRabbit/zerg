@@ -18,35 +18,6 @@ impl std::fmt::Display for LexerError {
 
 impl std::error::Error for LexerError {}
 
-pub struct SpannedToken<'input> {
-    start: usize,
-    end: usize,
-    pub token: Token<'input>
-}
-
-impl<'input> SpannedToken<'input> {
-    pub fn new(start: usize, end: usize, token: Token<'input>) -> SpannedToken<'input> {
-        Self {
-            start,
-            end,
-            token
-        }
-    }
-
-    pub fn token(&self) -> &Token<'input> {
-        &self.token
-    }
-}
-
-impl SpannedToken<'_> {
-    pub fn start(&self) -> usize {
-        self.start
-    }
-
-    pub fn end(&self) -> usize {
-        self.end
-    }
-}
 
 #[derive(Clone, Debug)]
 pub enum Token<'input> {
@@ -112,10 +83,6 @@ impl<'input> Lexer<'input> {
             input,
             char_indices: input.char_indices().peekable(),
         }
-    }
-
-    pub fn completed(&mut self) -> bool {
-        self.char_indices.peek().is_none()
     }
 
     fn next_char(&mut self) -> Option<(usize, char)> {
@@ -218,7 +185,7 @@ impl<'input> Lexer<'input> {
                     let start = start + '"'.len_utf8();
                     let mut end = start + '"'.len_utf8();
                     let mut found_escape = false;
-                    let mut just_found_escape = false;
+                    let mut just_found_escape;
                     while let Some((next, ch)) = self.peek() {
                         just_found_escape = false;
                         if *ch == '\\' {
@@ -241,7 +208,7 @@ impl<'input> Lexer<'input> {
                     let start = start + '\''.len_utf8();
                     let mut end = start + '\''.len_utf8();
                     let mut found_escape = false;
-                    let mut just_found_escape = false;
+                    let mut just_found_escape;
                     while let Some((next, ch)) = self.peek() {
                         just_found_escape = false;
                         if *ch == '\\' {

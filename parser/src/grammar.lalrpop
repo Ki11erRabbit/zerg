@@ -190,8 +190,27 @@ Expression: Expression<'input> = {
     <start: @L> "return" <value:(<DisjunctionExpr>)?> <end: @R> => {
         Expression::Return { value: value.map(|x| Box::new(x)), span: Span::new(start, end) }
     },
+    <ifexpr:IfExpression> => Expression::IfExpression(ifexpr),
     <expr:DisjunctionExpr> => expr,
 };
+
+IfExpression: IfExpression<'input> = {
+    <start: @L> "if" <condition:DisjunctionExpr> <block: Block> <elifs:Elifs> <else_block:(<ElseBlock>)?> <end: @R> => {
+        IfExpression::new(Box::new(condition), block, elifs, else_block, Span::new(start, end))
+    },
+    <start: @L> "if" <condition:DisjunctionExpr> <block: Block> <else_block:(<ElseBlock>)?> <end: @R> => {
+        IfExpression::new(Box::new(condition), block, Vec::new(), else_block, Span::new(start, end))
+    },
+};
+
+Elifs: Vec<(Expression<'input>, Block<'input>)> = {
+    <elifs:("elif" <DisjunctionExpr> <Block>)+> => elifs,
+};
+
+ElseBlock: Block<'input> = {
+    "else" <block:Block> => block,
+};
+
 
 DisjunctionExpr: Expression<'input> = {
     <start: @L> <lhs: ConjunctionExpr> "||" <rhs: DisjunctionExpr> <end: @R> => {

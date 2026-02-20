@@ -20,7 +20,7 @@ pub struct PathSegment<'input> {
 }
 
 impl<'input> PathSegment<'input> {
-    pub fn new(segment: &'input str, span: Span) -> PathSegment {
+    pub fn new(segment: &'input str, span: Span) -> PathSegment<'input> {
         PathSegment { segment, span }
     }
 }
@@ -32,7 +32,7 @@ pub struct Path<'input> {
 }
 
 impl<'input> Path<'input> {
-    pub fn new(segments: Vec<PathSegment<'input>>, span: Span) -> Path {
+    pub fn new(segments: Vec<PathSegment<'input>>, span: Span) -> Path<'input> {
         Path { segments, span }
     }
 }

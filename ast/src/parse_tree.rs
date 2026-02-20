@@ -242,6 +242,28 @@ pub enum Expression<'input> {
         operator: Operator,
         args: Vec<Expression<'input>>,
         span: Span,
+    },
+    IfExpression(IfExpression<'input>),
+}
+
+#[derive(Debug, Clone)]
+pub struct IfExpression<'input> {
+    pub condition: Box<Expression<'input>>,
+    pub then_block: Block<'input>,
+    pub elifs: Vec<(Expression<'input>, Block<'input>)>,
+    pub else_block: Option<Block<'input>>,
+    pub span: Span,
+}
+
+impl<'input> IfExpression<'input> {
+    pub fn new(
+        condition: Box<Expression<'input>>,
+        then_block: Block<'input>,
+        elifs: Vec<(Expression<'input>, Block<'input>)>,
+        else_block: Option<Block<'input>>,
+        span: Span,
+    ) -> Self {
+        IfExpression { condition, then_block, elifs, else_block, span }
     }
 }
 
