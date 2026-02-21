@@ -366,4 +366,5 @@ Operator: Operator = {
     "<" => Operator::LessThan,
     ">=" => Operator::GreaterThanEquals,
     "<=" => Operator::LessThanEquals,
+    "!" => Operator::Not,
 };

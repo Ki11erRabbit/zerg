@@ -10,6 +10,17 @@ impl<'input> File<'input> {
     pub fn new(top_level_statements: Vec<TopLevelStatement<'input>>, span: Span) -> Self {
         File { top_level_statements, span }
     }
+
+    pub fn function_iter(&self) -> impl Iterator<Item = &Function<'input>> {
+        self.top_level_statements.iter()
+            .filter(|top_level_statement| {
+                matches!(top_level_statement, TopLevelStatement::Function(_))
+            })
+            .map(|top_level_statement| match top_level_statement {
+                TopLevelStatement::Function(function) => function,
+                _ => unreachable!()
+            })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +125,10 @@ pub struct FunctionArguments<'input> {
 impl<'input> FunctionArguments<'input> {
     pub fn new(arguments: Vec<FunctionArgument<'input>>, span: Span) -> Self {
         FunctionArguments { arguments, span }
+    }
+
+    pub fn len(&self) -> usize {
+        self.arguments.len()
     }
 }
 
@@ -282,4 +297,5 @@ pub enum Operator {
     LessThanEquals,
     Or,
     And,
+    Not,
 }

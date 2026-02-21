@@ -1,7 +1,9 @@
+use std::path::PathBuf;
 use crate::{OwnedPath, Path, Span};
 
 #[derive(Debug, Clone)]
 pub struct File<'input> {
+    pub file_path: PathBuf,
     pub functions: Vec<Function<'input>>,
     pub span: Span,
 }
@@ -45,12 +47,16 @@ pub enum Type<'input> {
     F32(Span),
     F64(Span),
     String(Span),
-    Void(Span),
+    Unit(Span),
     Generic {
         name: &'input str,
         args: Vec<Type<'input>>,
         span: Span,
     },
+    Custom {
+        name: &'input str,
+        span: Span,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +71,7 @@ pub enum Statement<'input> {
         name: &'input str,
         r#type: Type<'input>,
         expr: Expression<'input>,
+        span: Span,
     },
     Assignment {
         target: Expression<'input>,

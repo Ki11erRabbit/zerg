@@ -15,6 +15,12 @@ impl Span {
     }
 }
 
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}-{}", self.start, self.end)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PathSegment<'input> {
     pub segment: &'input str,
@@ -36,6 +42,10 @@ pub struct Path<'input> {
 impl<'input> Path<'input> {
     pub fn new(segments: Vec<PathSegment<'input>>, span: Span) -> Path<'input> {
         Path { segments, span }
+    }
+    
+    pub fn to_vec_strings(&self) -> Vec<String> {
+        self.segments.iter().map(|s| s.segment.to_string()).collect()
     }
 }
 
@@ -60,5 +70,14 @@ pub struct OwnedPath {
 impl OwnedPath {
     pub fn new(segments: Vec<OwnedPathSegment>, span: Span) -> OwnedPath {
         OwnedPath { segments, span }
+    }
+}
+
+impl From<Vec<String>> for OwnedPath {
+    fn from(segments: Vec<String>) -> OwnedPath {
+        let segments = segments.into_iter().map(|seg| {
+            OwnedPathSegment::new(seg.as_str(), Span::new(0, 0))
+        }).collect();
+        OwnedPath::new(segments, Span::new(0, 0))
     }
 }
