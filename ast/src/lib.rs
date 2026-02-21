@@ -1,5 +1,6 @@
 pub mod parse_tree;
 pub mod desugared_tree;
+mod desugarer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
