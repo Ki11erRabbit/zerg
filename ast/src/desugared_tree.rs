@@ -1,4 +1,4 @@
-use crate::{Path, Span};
+use crate::{OwnedPath, Path, Span};
 
 #[derive(Debug, Clone)]
 pub struct File<'input> {
@@ -11,7 +11,7 @@ pub struct Function<'input> {
     pub public: bool,
     pub comptime: bool,
     pub inline: bool,
-    pub path: Path<'input>,
+    pub path: OwnedPath,
     pub arguments: FunctionArguments<'input>,
     pub return_type: Type<'input>,
     pub body: Block<'input>,
@@ -104,7 +104,7 @@ pub enum Expression<'input> {
         span: Span,
     },
     FunctionCall {
-        name: Path<'input>,
+        name: OwnedPath,
         args: Vec<Expression<'input>>,
         span: Span,
     },

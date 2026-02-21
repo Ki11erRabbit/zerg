@@ -1,6 +1,7 @@
 pub mod parse_tree;
 pub mod desugared_tree;
 mod desugarer;
+mod function_resolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -35,5 +36,29 @@ pub struct Path<'input> {
 impl<'input> Path<'input> {
     pub fn new(segments: Vec<PathSegment<'input>>, span: Span) -> Path<'input> {
         Path { segments, span }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnedPathSegment {
+    pub segment: String,
+    pub span: Span,
+}
+
+impl OwnedPathSegment {
+    pub fn new(segment: &str, span: Span) -> OwnedPathSegment {
+        OwnedPathSegment { segment: segment.to_string(), span }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnedPath {
+    pub segments: Vec<OwnedPathSegment>,
+    pub span: Span,
+}
+
+impl OwnedPath {
+    pub fn new(segments: Vec<OwnedPathSegment>, span: Span) -> OwnedPath {
+        OwnedPath { segments, span }
     }
 }
