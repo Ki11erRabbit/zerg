@@ -1,6 +1,7 @@
 use crate::lexer;
 use ast::parse_tree::*;
 use ast::{Span, Path, PathSegment};
+use std::borrow::Cow;
 
 grammar<'input>(input: &'input str);
 
@@ -22,6 +23,7 @@ extern {
         "inline" => lexer::Token::Inline,
         "lazy" => lexer::Token::Lazy,
         "comptime" => lexer::Token::Comptime,
+        "->" => lexer::Token::Arrow,
         "(" => lexer::Token::OpenParen,
         ")" => lexer::Token::CloseParen,
         "{" => lexer::Token::OpenBrace,
@@ -49,9 +51,9 @@ extern {
         "<=" => lexer::Token::LessThanEquals,
         ">=" => lexer::Token::GreaterThanEquals,
         "!" => lexer::Token::Not,
-        Number => lexer::Token::Number(<&'input str>),
-        String => lexer::Token::String(<&'input str>),
-        Identifier => lexer::Token::Identifier(<&'input str>),
+        Number => lexer::Token::Number(<Cow<'input, str>>),
+        String => lexer::Token::String(<Cow<'input, str>>),
+        Identifier => lexer::Token::Identifier(<Cow<'input, str>>),
     }
 }
 
@@ -140,7 +142,7 @@ FunctionArguments: FunctionArguments<'input> = {
 
 Type: Type<'input> = {
     <start: @L> <id:Identifier> <end: @R> => {
-        match id {
+        match id.to_string().as_str() {
             "u8" => Type::U8(Span::new(start, end)),
             "i8" => Type::I8(Span::new(start, end)),
             "u16" => Type::U16(Span::new(start, end)),
@@ -154,7 +156,7 @@ Type: Type<'input> = {
             "bool" => Type::Bool(Span::new(start, end)),
             "string" => Type::String(Span::new(start, end)),
             "unit" => Type::Unit(Span::new(start, end)),
-            name => Type::Custom { name, span: Span::new(start, end) }
+            name => Type::Custom { name: id, span: Span::new(start, end) }
         }
     },
     <start: @L> <name:Identifier> "<" <ty:Type> <tys: ("," <Type>)*> ">" <end: @R> => {
@@ -163,6 +165,16 @@ Type: Type<'input> = {
             args.push(item);
         }
         Type::Generic { name, args, span: Span::new(start, end) }
+    },
+    <start: @L> "(" ")" "->" <r_type:Type> <end: @R> => {
+        Type::Function { args: Vec::new(), r#return: Box::new(r_type), span: Span::new(start, end) }
+    },
+    <start: @L> "(" <ty:Type> <tys: ("," <Type>)*> ")" "->" <r_type:Type> <end: @R> => {
+        let mut args = vec![ty];
+        for item in tys {
+            args.push(item);
+        }
+        Type::Function { args, r#return: Box::new(r_type), span: Span::new(start, end) }
     }
 };
 

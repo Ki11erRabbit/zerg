@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 pub mod parse_tree;
 pub mod desugared_tree;
 mod desugarer;
@@ -23,12 +25,12 @@ impl std::fmt::Display for Span {
 
 #[derive(Debug, Clone)]
 pub struct PathSegment<'input> {
-    pub segment: &'input str,
+    pub segment: Cow<'input, str>,
     pub span: Span,
 }
 
 impl<'input> PathSegment<'input> {
-    pub fn new(segment: &'input str, span: Span) -> PathSegment<'input> {
+    pub fn new(segment: Cow<'input, str>, span: Span) -> PathSegment<'input> {
         PathSegment { segment, span }
     }
 }
@@ -43,7 +45,7 @@ impl<'input> Path<'input> {
     pub fn new(segments: Vec<PathSegment<'input>>, span: Span) -> Path<'input> {
         Path { segments, span }
     }
-    
+
     pub fn to_vec_strings(&self) -> Vec<String> {
         self.segments.iter().map(|s| s.segment.to_string()).collect()
     }

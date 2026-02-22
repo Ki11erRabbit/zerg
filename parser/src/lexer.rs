@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::iter::Peekable;
 use std::str::CharIndices;
 
@@ -36,6 +37,7 @@ pub enum Token<'input> {
     Lazy,
     Comptime,
     // Symbols
+    Arrow,
     OpenParen,
     CloseParen,
     OpenBrace,
@@ -65,10 +67,10 @@ pub enum Token<'input> {
     GreaterThanEquals,
     Not,
     // Constants
-    Number(&'input str),
-    String(&'input str),
+    Number(Cow<'input, str>),
+    String(Cow<'input, str>),
     // Identifier
-    Identifier(&'input str),
+    Identifier(Cow<'input, str>),
 }
 
 
@@ -127,7 +129,16 @@ impl<'input> Lexer<'input> {
                     return Some(Ok((start, Token::Assignment,  start + '='.len_utf8())))
                 },
                 '+' => return Some(Ok((start, Token::Plus,  start + '+'.len_utf8()))),
-                '-' => return Some(Ok((start, Token::Minus,  start + '-'.len_utf8()))),
+                '-' => {
+                    if let Some((next, ch)) = self.peek() {
+                        if *ch == '>' {
+                            let next = *next;
+                            self.next_char();
+                            return Some(Ok((start, Token::Arrow,  next + '>'.len_utf8())));
+                        }
+                    }
+                    return Some(Ok((start, Token::Minus,  start + '-'.len_utf8())))
+                },
                 '*' => return Some(Ok((start, Token::Multiply,  start + '*'.len_utf8()))),
                 '/' => return Some(Ok((start, Token::Divide,  start + '/'.len_utf8()))),
                 '%' => return Some(Ok((start, Token::Remainder,  start + '%'.len_utf8()))),
@@ -202,7 +213,7 @@ impl<'input> Lexer<'input> {
                         self.next_char();
                     }
                     let string = &self.input[start..end];
-                    return Some(Ok((start, Token::String(string),  end)));
+                    return Some(Ok((start, Token::String(Cow::Borrowed(string)),  end)));
                 }
                 '\'' => {
                     let start = start + '\''.len_utf8();
@@ -225,7 +236,7 @@ impl<'input> Lexer<'input> {
                         self.next_char();
                     }
                     let string = &self.input[start..end];
-                    return Some(Ok((start, Token::String(string),  end)));
+                    return Some(Ok((start, Token::String(Cow::Borrowed(string)),  end)));
                 }
                 '0'..='9' => {
                     let mut end = start;
@@ -240,7 +251,7 @@ impl<'input> Lexer<'input> {
                         }
                     }
                     let string = &self.input[start..end];
-                    let token = Token::Number(string);
+                    let token = Token::Number(Cow::Borrowed(string));
                     return Some(Ok((start, token,  end)));
                 }
                 c if c.is_whitespace() => {
@@ -273,7 +284,7 @@ impl<'input> Lexer<'input> {
                          "inline" => Some(Ok((start, Token::Inline,  end))),
                          "lazy" => Some(Ok((start, Token::Lazy,  end))),
                          "comptime" => Some(Ok((start, Token::Comptime,  end))),
-                         x => Some(Ok((start, Token::Identifier(x),  end))),
+                         x => Some(Ok((start, Token::Identifier(Cow::Borrowed(x)),  end))),
                      };
                 }
                 c => return Some(Err(LexerError::InvalidCharacter(c)))

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use crate::{Path, Span};
 
 #[derive(Debug, Clone)]
@@ -107,7 +108,7 @@ impl<'input> Function<'input> {
 #[derive(Debug, Clone)]
 pub enum FunctionKind<'input> {
     Named {
-        name: &'input str,
+        name: Cow<'input, str>,
         span: Span,
     },
     Operator {
@@ -135,13 +136,13 @@ impl<'input> FunctionArguments<'input> {
 #[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
     pub lazy: bool,
-    pub name: &'input str,
+    pub name: Cow<'input, str>,
     pub r#type: Type<'input>,
     pub span: Span,
 }
 
 impl<'input> FunctionArgument<'input> {
-    pub fn new(lazy: bool, name: &'input str, r#type: Type<'input>, span: Span) -> Self {
+    pub fn new(lazy: bool, name: Cow<'input, str>, r#type: Type<'input>, span: Span) -> Self {
         FunctionArgument { lazy, name, r#type, span }
     }
 }
@@ -162,12 +163,17 @@ pub enum Type<'input> {
     String(Span),
     Unit(Span),
     Generic {
-        name: &'input str,
+        name: Cow<'input, str>,
         args: Vec<Type<'input>>,
         span: Span,
     },
     Custom {
-        name: &'input str,
+        name: Cow<'input, str>,
+        span: Span,
+    },
+    Function {
+        args: Vec<Type<'input>>,
+        r#return: Box<Type<'input>>,
         span: Span,
     }
 }
@@ -187,7 +193,7 @@ impl<'input> Block<'input> {
 #[derive(Debug, Clone)]
 pub enum Statement<'input> {
     Let {
-        name: &'input str,
+        name: Cow<'input, str>,
         r#type: Type<'input>,
         expr: Expression<'input>,
         span: Span,
@@ -232,25 +238,25 @@ pub enum Expression<'input> {
         span: Span,
     },
     Variable {
-        name: &'input str,
+        name: Cow<'input, str>,
         span: Span,
     },
     ConstantNumber {
-        value: &'input str,
+        value: Cow<'input, str>,
         span: Span,
     },
     ConstantString {
-        value: &'input str,
+        value: Cow<'input, str>,
         span: Span,
     },
     FunctionCall {
-        name: &'input str,
+        name: Cow<'input, str>,
         args: Vec<Expression<'input>>,
         span: Span,
     },
     DottedFunctionCall {
         base: Box<Expression<'input>>,
-        name: &'input str,
+        name: Cow<'input, str>,
         args: Vec<Expression<'input>>,
         span: Span,
     },

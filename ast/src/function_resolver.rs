@@ -59,6 +59,10 @@ pub enum TypeInfo {
     },
     Custom {
         name: String,
+    },
+    Function {
+        args: Vec<TypeInfo>,
+        return_type: Box<TypeInfo>,
     }
 }
 
@@ -292,10 +296,17 @@ impl FunctionResolver {
                     .collect();
                 Some(TypeInfo::Generic { name: name.to_string(), args: arg_types })
             }
+            desugared_tree::Type::Function { args, r#return, .. } => {
+                let args = args.iter().filter_map(|arg| Self::desugared_type_to_typeinfo(arg)).collect();
+                let return_type = Self::desugared_type_to_typeinfo(r#return.as_ref()).unwrap();
+                Some(TypeInfo::Function { args, return_type: Box::new(return_type) })
+            }
         }
     }
 
     fn typeinfo_to_desugared_type(info: &TypeInfo, span: Span) -> desugared_tree::Type<'static> {
+        use std::borrow::Cow;
+        
         match info {
             TypeInfo::U8 => desugared_tree::Type::U8(span),
             TypeInfo::I8 => desugared_tree::Type::I8(span),
@@ -311,7 +322,7 @@ impl FunctionResolver {
             TypeInfo::String => desugared_tree::Type::String(span),
             TypeInfo::Unit => desugared_tree::Type::Unit(span),
             TypeInfo::Custom { name } => desugared_tree::Type::Custom {
-                name: Box::leak(name.clone().into_boxed_str()),
+                name: Cow::Owned(name.clone()),
                 span,
             },
             TypeInfo::Generic { name, args } => {
@@ -319,8 +330,19 @@ impl FunctionResolver {
                     .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
                     .collect();
                 desugared_tree::Type::Generic {
-                    name: Box::leak(name.clone().into_boxed_str()),
+                    name: Cow::Owned(name.clone()),
                     args: desugared_args,
+                    span,
+                }
+            }
+            TypeInfo::Function { args, return_type } => {
+                let desugared_args = args.iter()
+                    .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
+                    .collect();
+                let desugared_return = Self::typeinfo_to_desugared_type(return_type, span);
+                desugared_tree::Type::Function {
+                    args: desugared_args,
+                    r#return: Box::new(desugared_return),
                     span,
                 }
             }
@@ -349,6 +371,14 @@ impl FunctionResolver {
                 TypeInfo::Generic {
                     name: name.to_string(),
                     args: args.iter().map(Self::parse_tree_type_to_typeinfo).collect(),
+                }
+            }
+            parse_tree::Type::Function { args, r#return, .. } => {
+                let args = args.iter().map(Self::parse_tree_type_to_typeinfo).collect();
+                let return_type = Self::parse_tree_type_to_typeinfo(r#return.as_ref());
+                TypeInfo::Function {
+                    args,
+                    return_type: Box::new(return_type),
                 }
             }
         }
@@ -671,13 +701,13 @@ impl FunctionResolver {
             }
             parse_tree::Expression::Variable { name, span } => {
                 // Use the tracked type from the Let statement if available, using scope lookup
-                let r#type = self.lookup_variable(name)
+                let r#type = self.lookup_variable(&name)
                     .map(|ti| Self::typeinfo_to_desugared_type(&ti, span))
                     .unwrap_or_else(|| desugared_tree::Type::Unit(span));
                 desugared_tree::Expression::Variable { name, r#type, span }
             }
             parse_tree::Expression::ConstantNumber { value, span } => {
-                let inferred_type = Self::infer_number_type(value);
+                let inferred_type = Self::infer_number_type(&value);
                 let r#type = Self::typeinfo_to_desugared_type(&inferred_type, span);
                 desugared_tree::Expression::ConstantNumber { value, r#type, span }
             }
@@ -704,7 +734,7 @@ impl FunctionResolver {
                     Self::resolve_comptime_item
                 };
 
-                let resolved_path = action(self, name);
+                let resolved_path = action(self, &name);
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
@@ -1121,6 +1151,11 @@ impl FunctionResolver {
             parse_tree::Type::Generic { name, args, span} => {
                 let args = args.into_iter().map(Self::translate_type).collect::<Vec<_>>();
                 desugared_tree::Type::Generic { name, args, span }
+            }
+            parse_tree::Type::Function { args, r#return, span } => {
+                let args = args.into_iter().map(Self::translate_type).collect();
+                let r#return = Box::new(Self::translate_type(*r#return));
+                desugared_tree::Type::Function { args, r#return, span }
             }
         }
     }

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 use crate::{OwnedPath, Path, Span};
 
@@ -29,7 +30,7 @@ pub struct FunctionArguments<'input> {
 #[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
     pub lazy: bool,
-    pub name: &'input str,
+    pub name: Cow<'input, str>,
     pub r#type: Type<'input>,
     pub span: Span,
 }
@@ -50,12 +51,17 @@ pub enum Type<'input> {
     String(Span),
     Unit(Span),
     Generic {
-        name: &'input str,
+        name: Cow<'input, str>,
         args: Vec<Type<'input>>,
         span: Span,
     },
     Custom {
-        name: &'input str,
+        name: Cow<'input, str>,
+        span: Span,
+    },
+    Function {
+        args: Vec<Type<'input>>,
+        r#return: Box<Type<'input>>,
         span: Span,
     }
 }
@@ -69,7 +75,7 @@ pub struct Block<'input> {
 #[derive(Debug, Clone)]
 pub enum Statement<'input> {
     Let {
-        name: &'input str,
+        name: Cow<'input, str>,
         r#type: Type<'input>,
         expr: Expression<'input>,
         span: Span,
@@ -100,17 +106,17 @@ pub enum Expression<'input> {
         span: Span,
     },
     Variable {
-        name: &'input str,
+        name: Cow<'input, str>,
         r#type: Type<'input>,
         span: Span,
     },
     ConstantNumber {
-        value: &'input str,
+        value: Cow<'input, str>,
         r#type: Type<'input>,
         span: Span,
     },
     ConstantString {
-        value: &'input str,
+        value: Cow<'input, str>,
         span: Span,
     },
     FunctionCall {
