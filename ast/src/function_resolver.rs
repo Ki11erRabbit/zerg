@@ -113,6 +113,56 @@ pub struct FunctionResolver {
 }
 
 impl FunctionResolver {
+        /// Match argument types to function parameters, collecting generic substitutions
+        fn match_generics(
+            param_types: &[TypeInfo],
+            arg_types: &[TypeInfo],
+        ) -> Option<HashMap<String, TypeInfo>> {
+            let mut generics = HashMap::new();
+            if param_types.len() != arg_types.len() {
+                return None;
+            }
+            for (param, arg) in param_types.iter().zip(arg_types.iter()) {
+                match param {
+                    TypeInfo::Custom { name } => {
+                        generics.insert(name.clone(), arg.clone());
+                    }
+                    // For nested generics, could recurse here
+                    _ => {
+                        if param != arg {
+                            return None;
+                        }
+                    }
+                }
+            }
+            Some(generics)
+        }
+
+        /// Substitute generics in a type using the collected substitutions
+        fn substitute_generics(ty: &TypeInfo, generics: &HashMap<String, TypeInfo>) -> TypeInfo {
+            match ty {
+                TypeInfo::Custom { name } => {
+                    if let Some(subst) = generics.get(name) {
+                        subst.clone()
+                    } else {
+                        TypeInfo::Custom { name: name.clone() }
+                    }
+                }
+                TypeInfo::Generic { name, args } => {
+                    TypeInfo::Generic {
+                        name: name.clone(),
+                        args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
+                    }
+                }
+                TypeInfo::Function { args, return_type } => {
+                    TypeInfo::Function {
+                        args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
+                        return_type: Box::new(Self::substitute_generics(return_type, generics)),
+                    }
+                }
+                _ => ty.clone(),
+            }
+        }
     pub fn new() -> Self {
         Self {
             files: HashMap::new(),
@@ -572,6 +622,7 @@ impl FunctionResolver {
             comptime,
             inline,
             kind,
+            type_args,
             arguments,
             return_type,
             body,
@@ -620,6 +671,7 @@ impl FunctionResolver {
             comptime,
             inline,
             path,
+            type_args,
             arguments,
             return_type,
             body,
@@ -741,9 +793,24 @@ impl FunctionResolver {
                 };
 
                 // Look up the function signature to get the return type
-                let return_type = self.function_signatures.get(&resolved_path)
-                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
-                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                let return_type = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    // Collect argument types
+                    let arg_types: Vec<_> = args.iter()
+                        .map(|e| Self::get_expression_type(e))
+                        .collect::<Option<Vec<_>>>()
+                        .unwrap_or_default();
+                    // Try to match generics
+                    let generics = Self::match_generics(&sig.argument_types, &arg_types);
+                    let resolved_return = if let Some(generics) = generics {
+                        let substituted = Self::substitute_generics(&sig.return_type, &generics);
+                        Self::typeinfo_to_desugared_type(&substituted, span)
+                    } else {
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span)
+                    };
+                    resolved_return
+                } else {
+                    desugared_tree::Type::Unit(span)
+                };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),

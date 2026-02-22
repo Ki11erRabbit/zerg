@@ -98,17 +98,59 @@ Function: Function<'input> = {
     <start: @L> <vis:("pub")?> "inline" "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
         let public = vis.is_some();
         let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
-        Function::new_inline(public, kind, args, ret_type, block, Span::new(start, end))
+        Function::new_inline(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
     },
     <start: @L> <vis:("pub")?> "comptime" "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
         let public = vis.is_some();
         let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
-        Function::new_comptime(public, kind, args, ret_type, block, Span::new(start, end))
+        Function::new_comptime(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
     },
     <start: @L> <vis:("pub")?> "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
         let public = vis.is_some();
         let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
-        Function::new_function(public, kind, args, ret_type, block, Span::new(start, end))
+        Function::new_function(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "inline" "fun" <kind:FunctionKind> "<" ">" <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_inline(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "comptime" "fun" <kind:FunctionKind>  "<" ">"  <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_comptime(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "fun" <kind:FunctionKind> "<" ">" <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_function(public, kind, Vec::new(), args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "inline" "fun" <kind:FunctionKind> "<" <type_arg: Identifier> <type_args:("," <Identifier>)*> ">" <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        let mut new_type_args = vec![type_arg];
+        for item in type_args {
+            new_type_args.push(item);
+        }
+        Function::new_inline(public, kind, new_type_args, args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "comptime" "fun" <kind:FunctionKind>  "<" <type_arg: Identifier> <type_args:("," <Identifier>)*> ">"  <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        let mut new_type_args = vec![type_arg];
+        for item in type_args {
+            new_type_args.push(item);
+        }
+        Function::new_comptime(public, kind, new_type_args, args, ret_type, block, Span::new(start, end))
+    },
+    <start: @L> <vis:("pub")?> "fun" <kind:FunctionKind> "<" <type_arg: Identifier> <type_args:("," <Identifier>)*> ">" <args:FunctionArguments> <ret_type:(":" <Type>)?> <block:Block> <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        let mut new_type_args = vec![type_arg];
+        for item in type_args {
+            new_type_args.push(item);
+        }
+        Function::new_function(public, kind, new_type_args, args, ret_type, block, Span::new(start, end))
     },
 };
 

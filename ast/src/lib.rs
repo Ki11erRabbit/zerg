@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::path::PathBuf;
+use crate::function_resolver::{FunctionResolver, ResolverError};
 
 pub mod parse_tree;
 pub mod desugared_tree;
@@ -82,4 +84,14 @@ impl From<Vec<String>> for OwnedPath {
         }).collect();
         OwnedPath::new(segments, Span::new(0, 0))
     }
+}
+
+
+pub fn desugar_and_typecheck<'input>(files: Vec<(PathBuf, parse_tree::File<'input>)>) -> Result<Vec<desugared_tree::File<'input>>, ResolverError> {
+    let files = files.into_iter()
+        .map(|(path, file)| (path, desugarer::desugar(file)))
+        .collect();
+
+    let mut resolver = FunctionResolver::new();
+    resolver.resolve(files)
 }

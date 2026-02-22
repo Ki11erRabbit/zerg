@@ -15,6 +15,7 @@ pub struct Function<'input> {
     pub comptime: bool,
     pub inline: bool,
     pub path: OwnedPath,
+    pub type_args: Vec<Cow<'input, str>>,
     pub arguments: FunctionArguments<'input>,
     pub return_type: Type<'input>,
     pub body: Block<'input>,
