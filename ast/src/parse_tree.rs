@@ -158,6 +158,7 @@ pub enum Type<'input> {
     I64(Span),
     F32(Span),
     F64(Span),
+    Bool(Span),
     String(Span),
     Unit(Span),
     Generic {

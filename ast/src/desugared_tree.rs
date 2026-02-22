@@ -46,6 +46,7 @@ pub enum Type<'input> {
     I64(Span),
     F32(Span),
     F64(Span),
+    Bool(Span),
     String(Span),
     Unit(Span),
     Generic {
@@ -100,10 +101,12 @@ pub enum Expression<'input> {
     },
     Variable {
         name: &'input str,
+        r#type: Type<'input>,
         span: Span,
     },
     ConstantNumber {
         value: &'input str,
+        r#type: Type<'input>,
         span: Span,
     },
     ConstantString {
@@ -113,6 +116,7 @@ pub enum Expression<'input> {
     FunctionCall {
         name: OwnedPath,
         args: Vec<Expression<'input>>,
+        return_type: Type<'input>,
         span: Span,
     },
     IfExpression(IfExpression<'input>),
@@ -124,6 +128,7 @@ pub struct IfExpression<'input> {
     pub then_block: Block<'input>,
     pub elifs: Vec<(Expression<'input>, Block<'input>)>,
     pub else_block: Option<Block<'input>>,
+    pub return_type: Type<'input>,
     pub span: Span,
 }
 
@@ -133,8 +138,9 @@ impl<'input> IfExpression<'input> {
         then_block: Block<'input>,
         elifs: Vec<(Expression<'input>, Block<'input>)>,
         else_block: Option<Block<'input>>,
+        return_type: Type<'input>,
         span: Span,
     ) -> Self {
-        IfExpression { condition, then_block, elifs, else_block, span }
+        IfExpression { condition, then_block, elifs, else_block, return_type, span }
     }
 }

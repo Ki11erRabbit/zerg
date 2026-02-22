@@ -8,6 +8,7 @@ pub type ResolverResult<T> = Result<T, ResolverError>;
 pub enum ResolverError {
     Many(Vec<ResolverError>),
     UnknownFunction(String, PathBuf, Span),
+    CannotInferType(PathBuf, Span),
 }
 
 impl std::fmt::Display for ResolverError {
@@ -22,11 +23,44 @@ impl std::fmt::Display for ResolverError {
             ResolverError::UnknownFunction(name, path, span) => {
                 writeln!(f, "Unknown function {} in {:?}:{}", name, path, span)
             }
+            ResolverError::CannotInferType(path, span) => {
+                writeln!(f, "Cannot infer type in {:?}:{}", path, span)
+            }
         }
     }
 }
 
 impl std::error::Error for ResolverError {}
+
+#[derive(Debug, Clone)]
+pub struct FunctionSignature {
+    pub argument_types: Vec<TypeInfo>,
+    pub return_type: TypeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeInfo {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    F32,
+    F64,
+    Bool,
+    String,
+    Unit,
+    Generic {
+        name: String,
+        args: Vec<TypeInfo>,
+    },
+    Custom {
+        name: String,
+    }
+}
 
 pub struct FileDefinitions {
     /// The full file path including the name of the function
@@ -68,6 +102,10 @@ pub struct FunctionResolver {
     /// The path includes just the files that are currently in scope
     current_comptime_paths: HashSet<Vec<String>>,
     current_module: Vec<String>,
+    /// Maps function paths to their signatures (argument types and return type)
+    function_signatures: HashMap<Vec<String>, FunctionSignature>,
+    /// Stack of variable scopes - each scope maps variable names to their types
+    variable_scopes: Vec<HashMap<String, TypeInfo>>,
 }
 
 impl FunctionResolver {
@@ -77,6 +115,8 @@ impl FunctionResolver {
             current_paths: HashSet::new(),
             current_comptime_paths: HashSet::new(),
             current_module: Vec::new(),
+            function_signatures: HashMap::new(),
+            variable_scopes: vec![HashMap::new()], // Start with one global scope
         }
     }
 
@@ -96,6 +136,222 @@ impl FunctionResolver {
         self.current_paths.clear();
         self.current_comptime_paths.clear();
         self.current_module.clear();
+    }
+
+    /// Push a new variable scope onto the stack
+    fn push_scope(&mut self) {
+        self.variable_scopes.push(HashMap::new());
+    }
+
+    /// Pop the current variable scope from the stack
+    fn pop_scope(&mut self) {
+        // Keep at least one scope (global scope)
+        if self.variable_scopes.len() > 1 {
+            self.variable_scopes.pop();
+        }
+    }
+
+    /// Add a variable to the current scope
+    fn add_variable(&mut self, name: String, type_info: TypeInfo) {
+        if let Some(current_scope) = self.variable_scopes.last_mut() {
+            current_scope.insert(name, type_info);
+        }
+    }
+
+    /// Look up a variable in the current scope chain (searching from innermost to outermost)
+    fn lookup_variable(&self, name: &str) -> Option<TypeInfo> {
+        for scope in self.variable_scopes.iter().rev() {
+            if let Some(type_info) = scope.get(name) {
+                return Some(type_info.clone());
+            }
+        }
+        None
+    }
+
+    /// Get the type of the last expression in a block (the block's yield type)
+    fn get_block_yield_type(block: &desugared_tree::Block) -> Option<TypeInfo> {
+        // Find the last expression statement
+        for stmt in block.statements.iter().rev() {
+            if let desugared_tree::Statement::Expression { expr, .. } = stmt {
+                return Self::get_expression_type(expr);
+            }
+        }
+        // If no expression statement, block yields unit
+        Some(TypeInfo::Unit)
+    }
+
+    /// Resolve a function by name and argument types (for operator overloading)
+    fn resolve_function_with_types(&self, name: &str, arg_types: &[TypeInfo]) -> Option<Vec<String>> {
+        let paths = self.generate_paths(name);
+
+        for base_path in &paths {
+            // Try to find an exact match with type signature
+            let mut typed_path = base_path.clone();
+            for arg_type in arg_types {
+                typed_path.push(format!("{:?}", arg_type).to_lowercase());
+            }
+            
+            if let Some(def) = self.files.get(&typed_path[..(typed_path.len() - arg_types.len() - 1)]) {
+                if def.lookup_export(&typed_path) {
+                    return Some(typed_path);
+                }
+            }
+
+            // Fall back to untyped path
+            if let Some(def) = self.files.get(&base_path[..(base_path.len() - 1)]) {
+                if def.lookup_export(base_path) {
+                    return Some(base_path.clone());
+                }
+            }
+        }
+
+        let mut local_path = self.current_module.clone();
+        local_path.push(name.to_string());
+        
+        // Try typed version
+        let mut typed_local_path = local_path.clone();
+        for arg_type in arg_types {
+            typed_local_path.push(format!("{:?}", arg_type).to_lowercase());
+        }
+        
+        if let Some(def) = self.files.get(&typed_local_path[..(typed_local_path.len() - arg_types.len() - 1)]) {
+            if def.lookup_internal(&typed_local_path) {
+                return Some(typed_local_path);
+            }
+        }
+        
+        if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
+            if def.lookup_internal(&local_path) {
+                return Some(local_path);
+            }
+        }
+
+        None
+    }
+
+    /// Infer the type of a numeric constant
+    fn infer_number_type(value: &str) -> TypeInfo {
+        // For now, default to i32. In a real implementation, you might analyze the value
+        // or use context to determine the correct type
+        if value.contains('.') {
+            TypeInfo::F64
+        } else {
+            TypeInfo::I32
+        }
+    }
+
+    /// Get the type of an expression after resolution
+    fn get_expression_type(expr: &desugared_tree::Expression) -> Option<TypeInfo> {
+        match expr {
+            desugared_tree::Expression::Variable { r#type, .. } => {
+                Self::desugared_type_to_typeinfo(r#type)
+            }
+            desugared_tree::Expression::ConstantNumber { r#type, .. } => {
+                Self::desugared_type_to_typeinfo(r#type)
+            }
+            desugared_tree::Expression::ConstantString { .. } => {
+                Some(TypeInfo::String)
+            }
+            desugared_tree::Expression::FunctionCall { return_type, .. } => {
+                Self::desugared_type_to_typeinfo(return_type)
+            }
+            desugared_tree::Expression::Parenthesized { expr, .. } => {
+                Self::get_expression_type(expr)
+            }
+            desugared_tree::Expression::Return { .. } => {
+                Some(TypeInfo::Unit)
+            }
+            desugared_tree::Expression::IfExpression(if_expr) => {
+                Self::desugared_type_to_typeinfo(&if_expr.return_type)
+            }
+        }
+    }
+
+    /// Convert a desugared Type to TypeInfo
+    fn desugared_type_to_typeinfo(ty: &desugared_tree::Type) -> Option<TypeInfo> {
+        match ty {
+            desugared_tree::Type::U8(_) => Some(TypeInfo::U8),
+            desugared_tree::Type::I8(_) => Some(TypeInfo::I8),
+            desugared_tree::Type::U16(_) => Some(TypeInfo::U16),
+            desugared_tree::Type::I16(_) => Some(TypeInfo::I16),
+            desugared_tree::Type::U32(_) => Some(TypeInfo::U32),
+            desugared_tree::Type::I32(_) => Some(TypeInfo::I32),
+            desugared_tree::Type::U64(_) => Some(TypeInfo::U64),
+            desugared_tree::Type::I64(_) => Some(TypeInfo::I64),
+            desugared_tree::Type::F32(_) => Some(TypeInfo::F32),
+            desugared_tree::Type::F64(_) => Some(TypeInfo::F64),
+            desugared_tree::Type::Bool(_) => Some(TypeInfo::Bool),
+            desugared_tree::Type::String(_) => Some(TypeInfo::String),
+            desugared_tree::Type::Unit(_) => Some(TypeInfo::Unit),
+            desugared_tree::Type::Custom { name, .. } => {
+                Some(TypeInfo::Custom { name: name.to_string() })
+            }
+            desugared_tree::Type::Generic { name, args, .. } => {
+                let arg_types = args.iter()
+                    .filter_map(|arg| Self::desugared_type_to_typeinfo(arg))
+                    .collect();
+                Some(TypeInfo::Generic { name: name.to_string(), args: arg_types })
+            }
+        }
+    }
+
+    fn typeinfo_to_desugared_type(info: &TypeInfo, span: Span) -> desugared_tree::Type<'static> {
+        match info {
+            TypeInfo::U8 => desugared_tree::Type::U8(span),
+            TypeInfo::I8 => desugared_tree::Type::I8(span),
+            TypeInfo::U16 => desugared_tree::Type::U16(span),
+            TypeInfo::I16 => desugared_tree::Type::I16(span),
+            TypeInfo::U32 => desugared_tree::Type::U32(span),
+            TypeInfo::I32 => desugared_tree::Type::I32(span),
+            TypeInfo::U64 => desugared_tree::Type::U64(span),
+            TypeInfo::I64 => desugared_tree::Type::I64(span),
+            TypeInfo::F32 => desugared_tree::Type::F32(span),
+            TypeInfo::F64 => desugared_tree::Type::F64(span),
+            TypeInfo::Bool => desugared_tree::Type::Bool(span),
+            TypeInfo::String => desugared_tree::Type::String(span),
+            TypeInfo::Unit => desugared_tree::Type::Unit(span),
+            TypeInfo::Custom { name } => desugared_tree::Type::Custom {
+                name: Box::leak(name.clone().into_boxed_str()),
+                span,
+            },
+            TypeInfo::Generic { name, args } => {
+                let desugared_args = args.iter()
+                    .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
+                    .collect();
+                desugared_tree::Type::Generic {
+                    name: Box::leak(name.clone().into_boxed_str()),
+                    args: desugared_args,
+                    span,
+                }
+            }
+        }
+    }
+
+    fn parse_tree_type_to_typeinfo(r#type: &parse_tree::Type) -> TypeInfo {
+        match r#type {
+            parse_tree::Type::U8(_) => TypeInfo::U8,
+            parse_tree::Type::I8(_) => TypeInfo::I8,
+            parse_tree::Type::U16(_) => TypeInfo::U16,
+            parse_tree::Type::I16(_) => TypeInfo::I16,
+            parse_tree::Type::U32(_) => TypeInfo::U32,
+            parse_tree::Type::I32(_) => TypeInfo::I32,
+            parse_tree::Type::U64(_) => TypeInfo::U64,
+            parse_tree::Type::I64(_) => TypeInfo::I64,
+            parse_tree::Type::F32(_) => TypeInfo::F32,
+            parse_tree::Type::F64(_) => TypeInfo::F64,
+            parse_tree::Type::Bool(_) => TypeInfo::Bool,
+            parse_tree::Type::String(_) => TypeInfo::String,
+            parse_tree::Type::Unit(_) => TypeInfo::Unit,
+            parse_tree::Type::Custom { name, .. } => TypeInfo::Custom {
+                name: name.to_string(),
+            },
+            parse_tree::Type::Generic { name, args, .. } => {
+                TypeInfo::Generic {
+                    name: name.to_string(),
+                    args: args.iter().map(Self::parse_tree_type_to_typeinfo).collect(),
+                }
+            }
+        }
     }
 
     fn generate_paths(&self, item: &str) -> Vec<Vec<String>> {
@@ -159,20 +415,29 @@ impl FunctionResolver {
     }
 
     fn load_file<'input>(&mut self, (path, file): &(PathBuf, parse_tree::File<'input>)) {
-        let segments: Vec<String> = Self::generate_segements(&path);
+        let segments: Vec<String> = Self::generate_segments(&path);
 
         let mut file_def = FileDefinitions::new();
 
         for function in file.function_iter() {
+            let arg_types: Vec<TypeInfo> = function.arguments.arguments.iter()
+                .map(|arg| Self::parse_tree_type_to_typeinfo(&arg.r#type))
+                .collect();
+            let return_type = Self::parse_tree_type_to_typeinfo(&function.return_type);
+
             match &function.kind {
                 parse_tree::FunctionKind::Named { name, .. } => {
-                    let mut path = segments.clone();
-                    path.push(name.to_string());
+                    let mut func_path = segments.clone();
+                    func_path.push(name.to_string());
                     if function.public {
-                        file_def.insert_export(path);
+                        file_def.insert_export(func_path.clone());
                     } else {
-                        file_def.insert_internal(path);
+                        file_def.insert_internal(func_path.clone());
                     }
+                    self.function_signatures.insert(func_path, FunctionSignature {
+                        argument_types: arg_types,
+                        return_type,
+                    });
                 }
                 parse_tree::FunctionKind::Operator { operator, .. } => {
                     let name = match operator {
@@ -197,13 +462,17 @@ impl FunctionResolver {
                         parse_tree::Operator::And => "&&",
                         parse_tree::Operator::Not => "!",
                     };
-                    let mut path = segments.clone();
-                    path.push(name.to_string());
+                    let mut func_path = segments.clone();
+                    func_path.push(name.to_string());
                     if function.public {
-                        file_def.insert_export(path);
+                        file_def.insert_export(func_path.clone());
                     } else {
-                        file_def.insert_internal(path);
+                        file_def.insert_internal(func_path.clone());
                     }
+                    self.function_signatures.insert(func_path, FunctionSignature {
+                        argument_types: arg_types,
+                        return_type,
+                    });
                 }
             }
         }
@@ -230,7 +499,7 @@ impl FunctionResolver {
     }
 
     fn resolve_file<'input>(&mut self, path: PathBuf, file: parse_tree::File<'input>) -> ResolverResult<desugared_tree::File<'input>> {
-        let segments: Vec<String> = Self::generate_segements(&path);
+        let segments: Vec<String> = Self::generate_segments(&path);
         self.set_current_module(segments.clone());
 
         let parse_tree::File {
@@ -281,7 +550,7 @@ impl FunctionResolver {
 
         let body = self.resolve_block(path, body, comptime)?;
 
-        let mut segments = Self::generate_segements(path);
+        let mut segments = Self::generate_segments(path);
         match kind {
             parse_tree::FunctionKind::Named { name, .. } => {
                 segments.push(name.to_string());
@@ -330,6 +599,10 @@ impl FunctionResolver {
 
     fn resolve_block<'input>(&mut self, path: &PathBuf, block: parse_tree::Block<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Block<'input>> {
         let parse_tree::Block { statements, span } = block;
+        
+        // Push a new scope for this block
+        self.push_scope();
+        
         let mut new_statements = Vec::with_capacity(statements.len());
         let mut errors = Vec::new();
         for statement in statements {
@@ -338,6 +611,9 @@ impl FunctionResolver {
                 Err(e) => errors.push(e),
             }
         }
+
+        // Pop the scope when leaving the block
+        self.pop_scope();
 
         if errors.is_empty() {
             let statements = new_statements;
@@ -354,6 +630,11 @@ impl FunctionResolver {
             parse_tree::Statement::Let { name ,r#type, expr, span } => {
                 let r#type = Self::translate_type(r#type);
                 let expr = self.resolve_expression(path, expr, in_comptime)?;
+
+                // Track the variable's type in the current scope
+                if let Some(type_info) = Self::desugared_type_to_typeinfo(&r#type) {
+                    self.add_variable(name.to_string(), type_info);
+                }
 
                 desugared_tree::Statement::Let { name, r#type, expr, span }
             }
@@ -389,10 +670,16 @@ impl FunctionResolver {
                 desugared_tree::Expression::Parenthesized { expr, span }
             }
             parse_tree::Expression::Variable { name, span } => {
-                desugared_tree::Expression::Variable { name, span }
+                // Use the tracked type from the Let statement if available, using scope lookup
+                let r#type = self.lookup_variable(name)
+                    .map(|ti| Self::typeinfo_to_desugared_type(&ti, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                desugared_tree::Expression::Variable { name, r#type, span }
             }
             parse_tree::Expression::ConstantNumber { value, span } => {
-                desugared_tree::Expression::ConstantNumber { value, span }
+                let inferred_type = Self::infer_number_type(value);
+                let r#type = Self::typeinfo_to_desugared_type(&inferred_type, span);
+                desugared_tree::Expression::ConstantNumber { value, r#type, span }
             }
             parse_tree::Expression::ConstantString { value, span } => {
                 desugared_tree::Expression::ConstantString { value, span }
@@ -423,9 +710,15 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
+                // Look up the function signature to get the return type
+                let return_type = self.function_signatures.get(&resolved_path)
+                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
+                    return_type,
                     span,
                 }
             }
@@ -482,9 +775,15 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
+                // Look up the function signature to get the return type
+                let return_type = self.function_signatures.get(&resolved_path)
+                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
+                    return_type,
                     span,
                 }
             }
@@ -505,6 +804,10 @@ impl FunctionResolver {
                     }
                 };
 
+                // Get the types of the arguments for overload resolution
+                let lhs_type = Self::get_expression_type(&lhs);
+                let rhs_type = Self::get_expression_type(&rhs);
+
                 let args = vec![lhs, rhs];
 
                 let name = match op {
@@ -524,69 +827,137 @@ impl FunctionResolver {
                     _ => unreachable!("! operator in bin"),
                 };
 
-                let action = if in_comptime {
-                    Self::resolve_item
-                } else {
-                    Self::resolve_comptime_item
-                };
+                // Build the argument types for overload resolution
+                let arg_types: Vec<TypeInfo> = vec![lhs_type, rhs_type]
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap_or_default();
 
-                let resolved_path = action(self, name);
+                // Try to resolve with types first, fall back to untyped
+                let resolved_path = if arg_types.len() == 2 {
+                    self.resolve_function_with_types(name, &arg_types)
+                        .or_else(|| {
+                            let action = if in_comptime {
+                                Self::resolve_item
+                            } else {
+                                Self::resolve_comptime_item
+                            };
+                            action(self, name)
+                        })
+                } else {
+                    let action = if in_comptime {
+                        Self::resolve_item
+                    } else {
+                        Self::resolve_comptime_item
+                    };
+                    action(self, name)
+                };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
+                // Look up the function signature to get the return type
+                let return_type = self.function_signatures.get(&resolved_path)
+                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
+                    return_type,
                     span,
                 }
             }
             parse_tree::Expression::Not { value, span } => {
                 let value = self.resolve_expression(path, *value, in_comptime)?;
+                let value_type = Self::get_expression_type(&value);
                 let args = vec![value];
 
                 let name = "!";
 
-                let action = if in_comptime {
-                    Self::resolve_item
-                } else {
-                    Self::resolve_comptime_item
-                };
+                // Build the argument types for overload resolution
+                let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                let resolved_path = action(self, name);
+                // Try to resolve with types first, fall back to untyped
+                let resolved_path = if !arg_types.is_empty() {
+                    self.resolve_function_with_types(name, &arg_types)
+                        .or_else(|| {
+                            let action = if in_comptime {
+                                Self::resolve_item
+                            } else {
+                                Self::resolve_comptime_item
+                            };
+                            action(self, name)
+                        })
+                } else {
+                    let action = if in_comptime {
+                        Self::resolve_item
+                    } else {
+                        Self::resolve_comptime_item
+                    };
+                    action(self, name)
+                };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
+                // Look up the function signature to get the return type
+                let return_type = self.function_signatures.get(&resolved_path)
+                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
+                    return_type,
                     span,
                 }
             }
             parse_tree::Expression::Negation { value, span } => {
                 let value = self.resolve_expression(path, *value, in_comptime)?;
+                let value_type = Self::get_expression_type(&value);
                 let args = vec![value];
 
                 let name = "-negate";
 
-                let action = if in_comptime {
-                    Self::resolve_item
-                } else {
-                    Self::resolve_comptime_item
-                };
+                // Build the argument types for overload resolution
+                let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                let resolved_path = action(self, name);
+                // Try to resolve with types first, fall back to untyped
+                let resolved_path = if !arg_types.is_empty() {
+                    self.resolve_function_with_types(name, &arg_types)
+                        .or_else(|| {
+                            let action = if in_comptime {
+                                Self::resolve_item
+                            } else {
+                                Self::resolve_comptime_item
+                            };
+                            action(self, name)
+                        })
+                } else {
+                    let action = if in_comptime {
+                        Self::resolve_item
+                    } else {
+                        Self::resolve_comptime_item
+                    };
+                    action(self, name)
+                };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
+                // Look up the function signature to get the return type
+                let return_type = self.function_signatures.get(&resolved_path)
+                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
+                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
+                    return_type,
                     span,
                 }
             }
@@ -659,11 +1030,38 @@ impl FunctionResolver {
             return Err(ResolverError::Many(errors));
         }
 
+        // Determine the return type of the if expression
+        // If there's no else block, the if expression yields unit
+        // Otherwise, we need to check the last expressions in all blocks
+        let return_type = if else_block.is_none() {
+            // No else block means the if expression always yields unit
+            TypeInfo::Unit
+        } else {
+            // Get the yield type from then_block
+            let then_type = Self::get_block_yield_type(&then_block);
+            
+            // Check all elifs for consistency
+            let _elifs_types: Vec<_> = elifs.iter()
+                .map(|(_, block)| Self::get_block_yield_type(block))
+                .collect();
+            
+            // Get the yield type from else_block
+            let _else_type = else_block.as_ref().and_then(Self::get_block_yield_type);
+            
+            // All branches must have the same type
+            // For now, use the then_type as the unified type
+            // In a full type checker, this would verify all branches match
+            then_type.unwrap_or(TypeInfo::Unit)
+        };
+
+        let return_type_desugared = Self::typeinfo_to_desugared_type(&return_type, span);
+
         Ok(desugared_tree::IfExpression {
             condition: Box::new(condition),
             then_block,
             elifs,
             else_block,
+            return_type: return_type_desugared,
             span,
         })
     }
@@ -671,7 +1069,7 @@ impl FunctionResolver {
 
 impl FunctionResolver {
 
-    fn generate_segements(path: &PathBuf) -> Vec<String> {
+    fn generate_segments(path: &PathBuf) -> Vec<String> {
         path.iter().map(|os_str| {
             os_str.to_string_lossy().to_string()
         }).collect()
@@ -716,6 +1114,7 @@ impl FunctionResolver {
             parse_tree::Type::I64(span) => desugared_tree::Type::I64(span),
             parse_tree::Type::F32(span) => desugared_tree::Type::F32(span),
             parse_tree::Type::F64(span) => desugared_tree::Type::F64(span),
+            parse_tree::Type::Bool(span) => desugared_tree::Type::Bool(span),
             parse_tree::Type::String(span) => desugared_tree::Type::String(span),
             parse_tree::Type::Unit(span) => desugared_tree::Type::Unit(span),
             parse_tree::Type::Custom { name, span } => desugared_tree::Type::Custom { name, span},

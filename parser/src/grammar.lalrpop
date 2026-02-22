@@ -151,6 +151,7 @@ Type: Type<'input> = {
             "i64" => Type::I64(Span::new(start, end)),
             "f32" => Type::F32(Span::new(start, end)),
             "f64" => Type::F64(Span::new(start, end)),
+            "bool" => Type::Bool(Span::new(start, end)),
             "string" => Type::String(Span::new(start, end)),
             "unit" => Type::Unit(Span::new(start, end)),
             name => Type::Custom { name, span: Span::new(start, end) }
