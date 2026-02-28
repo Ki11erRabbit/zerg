@@ -463,6 +463,70 @@ impl FunctionResolver {
     }
 
     fn resolve_item(&self, item: &str) -> Option<Vec<String>> {
+        // If the caller passed a dotted path (module::func or module.func),
+        // try to resolve it directly as a module path + function name.
+        if item.contains("::") || item.contains('.') {
+            let segments: Vec<String> = if item.contains("::") {
+                item.split("::").map(|s| s.to_string()).collect()
+            } else {
+                item.split('.').map(|s| s.to_string()).collect()
+            };
+            if segments.len() >= 1 {
+                let module_path = &segments[..(segments.len() - 1)];
+
+                // Helper: try exact module key, or fallback to a file key whose trailing
+                // segments match module_path, allowing the file's last segment to contain an extension.
+                let find_module_key = |module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>| -> Option<Vec<String>> {
+                    if files.contains_key(module_path) {
+                        return Some(module_path.to_vec());
+                    }
+                    for key in files.keys() {
+                        if key.len() < module_path.len() { continue; }
+                        let start = key.len() - module_path.len();
+                        let mut matched = true;
+                        for (i, seg) in module_path.iter().enumerate() {
+                            let key_seg = &key[start + i];
+                            if i + 1 == module_path.len() {
+                                // last segment: compare without extension
+                                let key_base = key_seg.split('.').next().unwrap_or(key_seg);
+                                if key_base != seg { matched = false; break; }
+                            } else {
+                                if key_seg != seg { matched = false; break; }
+                            }
+                        }
+                        if matched {
+                            return Some(key.clone());
+                        }
+                    }
+                    None
+                };
+
+                if let Some(module_key) = find_module_key(module_path, &self.files) {
+                    let mut full = module_key.clone();
+                    full.push(segments[segments.len() - 1].clone());
+                    if let Some(def) = self.files.get(&module_key) {
+                        if def.lookup_export(&full) {
+                            return Some(full);
+                        }
+                    }
+                }
+
+                // also check as internal if in same module (with same fallback)
+                let mut local_path = self.current_module.clone();
+                for seg in module_path {
+                    local_path.push(seg.clone());
+                }
+                if let Some(module_key) = find_module_key(&local_path[..], &self.files) {
+                    let mut full = module_key.clone();
+                    full.push(segments[segments.len() - 1].clone());
+                    if let Some(def) = self.files.get(&module_key) {
+                        if def.lookup_internal(&full) {
+                            return Some(full);
+                        }
+                    }
+                }
+            }
+        }
         let paths = self.generate_paths(item);
 
         for path in &paths {
@@ -485,6 +549,65 @@ impl FunctionResolver {
     }
 
     fn resolve_comptime_item(&self, item: &str) -> Option<Vec<String>> {
+        // Support dotted/module paths passed as the item string.
+        if item.contains("::") || item.contains('.') {
+            let segments: Vec<String> = if item.contains("::") {
+                item.split("::").map(|s| s.to_string()).collect()
+            } else {
+                item.split('.').map(|s| s.to_string()).collect()
+            };
+            if segments.len() >= 1 {
+                let module_path = &segments[..(segments.len() - 1)];
+
+                let find_module_key = |module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>| -> Option<Vec<String>> {
+                    if files.contains_key(module_path) {
+                        return Some(module_path.to_vec());
+                    }
+                    for key in files.keys() {
+                        if key.len() < module_path.len() { continue; }
+                        let start = key.len() - module_path.len();
+                        let mut matched = true;
+                        for (i, seg) in module_path.iter().enumerate() {
+                            let key_seg = &key[start + i];
+                            if i + 1 == module_path.len() {
+                                let key_base = key_seg.split('.').next().unwrap_or(key_seg);
+                                if key_base != seg { matched = false; break; }
+                            } else {
+                                if key_seg != seg { matched = false; break; }
+                            }
+                        }
+                        if matched {
+                            return Some(key.clone());
+                        }
+                    }
+                    None
+                };
+
+                if let Some(module_key) = find_module_key(module_path, &self.files) {
+                    let mut full = module_key.clone();
+                    full.push(segments[segments.len() - 1].clone());
+                    if let Some(def) = self.files.get(&module_key) {
+                        if def.lookup_export(&full) {
+                            return Some(full);
+                        }
+                    }
+                }
+
+                let mut local_path = self.current_module.clone();
+                for seg in module_path {
+                    local_path.push(seg.clone());
+                }
+                if let Some(module_key) = find_module_key(&local_path[..], &self.files) {
+                    let mut full = module_key.clone();
+                    full.push(segments[segments.len() - 1].clone());
+                    if let Some(def) = self.files.get(&module_key) {
+                        if def.lookup_internal(&full) {
+                            return Some(full);
+                        }
+                    }
+                }
+            }
+        }
         let paths = self.generate_comptime_paths(item);
 
         for path in &paths {
@@ -585,6 +708,10 @@ impl FunctionResolver {
                 Err(e) => errors.push(e),
             }
             self.clear_paths();
+        }
+
+        if !errors.is_empty() {
+            return Err(ResolverError::Many(errors));
         }
 
         Ok(resolved_files)
@@ -793,9 +920,9 @@ impl FunctionResolver {
                 let args = new_args;
 
                 let action = if in_comptime {
-                    Self::resolve_item
-                } else {
                     Self::resolve_comptime_item
+                } else {
+                    Self::resolve_item
                 };
 
                 let resolved_path = action(self, &name);
@@ -886,9 +1013,9 @@ impl FunctionResolver {
                 };
 
                 let action = if in_comptime {
-                    Self::resolve_item
-                } else {
                     Self::resolve_comptime_item
+                } else {
+                    Self::resolve_item
                 };
 
                 let resolved_path = action(self, name);
@@ -966,17 +1093,17 @@ impl FunctionResolver {
                     self.resolve_function_with_types(name, &arg_types)
                         .or_else(|| {
                             let action = if in_comptime {
-                                Self::resolve_item
-                            } else {
                                 Self::resolve_comptime_item
+                            } else {
+                                Self::resolve_item
                             };
                             action(self, name)
                         })
                 } else {
                     let action = if in_comptime {
-                        Self::resolve_item
-                    } else {
                         Self::resolve_comptime_item
+                    } else {
+                        Self::resolve_item
                     };
                     action(self, name)
                 };
@@ -1018,17 +1145,17 @@ impl FunctionResolver {
                     self.resolve_function_with_types(name, &arg_types)
                         .or_else(|| {
                             let action = if in_comptime {
-                                Self::resolve_item
-                            } else {
                                 Self::resolve_comptime_item
+                            } else {
+                                Self::resolve_item
                             };
                             action(self, name)
                         })
                 } else {
                     let action = if in_comptime {
-                        Self::resolve_item
-                    } else {
                         Self::resolve_comptime_item
+                    } else {
+                        Self::resolve_item
                     };
                     action(self, name)
                 };
@@ -1109,7 +1236,73 @@ impl FunctionResolver {
             }
             parse_tree::Expression::IfExpression(if_expr) => desugared_tree::Expression::IfExpression(self.resolve_if_expression(path, if_expr, in_comptime)?),
 
-            parse_tree::Expression::DottedFunctionCall { .. } => unreachable!("DotedFunctionCall"),
+            parse_tree::Expression::DottedFunctionCall { base, name, args, span } => {
+                // Resolve arguments first
+                let mut new_args = Vec::with_capacity(args.len());
+                let mut errors = Vec::new();
+                for arg in args {
+                    match self.resolve_expression(path, arg, in_comptime) {
+                        Ok(res) => new_args.push(res),
+                        Err(e) => errors.push(e),
+                    }
+                }
+                if !errors.is_empty() {
+                    return Err(ResolverError::Many(errors))
+                }
+                let args = new_args;
+
+                // Determine the base string for the module path
+                fn expr_to_base_str(expr: &parse_tree::Expression<'_>) -> Option<String> {
+                    match expr {
+                        parse_tree::Expression::Variable { name, .. } => Some(name.to_string()),
+                        parse_tree::Expression::FunctionCall { name, .. } => Some(name.to_string()),
+                        parse_tree::Expression::DottedFunctionCall { base, name, .. } => {
+                            if let Some(mut s) = expr_to_base_str(base) {
+                                s.push_str("::");
+                                s.push_str(&name.to_string());
+                                Some(s)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+
+                let base_str_opt = expr_to_base_str(base.as_ref());
+                let Some(base_str) = base_str_opt else {
+                    return Err(ResolverError::CannotInferType(path.clone(), span));
+                };
+
+                // Build the full item string like "module::item"
+                let full_item = format!("{}::{}", base_str, name.to_string());
+
+                let action = if in_comptime { Self::resolve_comptime_item } else { Self::resolve_item };
+
+                let resolved_path = action(self, &full_item);
+
+                let Some(resolved_path) = resolved_path else {
+                    return Err(ResolverError::UnknownFunction(full_item, path.clone(), span))
+                };
+
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    (
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                        Self::signature_to_desugared_type(&sig, span)
+                    )
+                } else {
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
+                };
+
+                desugared_tree::Expression::FunctionCall {
+                    name: OwnedPath::from(resolved_path),
+                    args,
+                    return_type,
+                    function_type,
+                    span,
+                }
+            },
         };
         Ok(expr)
     }
@@ -1217,9 +1410,18 @@ impl FunctionResolver {
 impl FunctionResolver {
 
     fn generate_segments(path: &PathBuf) -> Vec<String> {
-        path.iter().map(|os_str| {
+        let mut segs: Vec<String> = path.iter().map(|os_str| {
             os_str.to_string_lossy().to_string()
-        }).collect()
+        }).collect();
+        // Normalize last segment by removing .zerg extension if present
+        if let Some(last) = segs.last_mut() {
+            if last.ends_with(".zerg") {
+                if let Some(stripped) = last.strip_suffix(".zerg") {
+                    *last = stripped.to_string();
+                }
+            }
+        }
+        segs
     }
 
     fn translate_function_arguments(args: parse_tree::FunctionArguments) -> desugared_tree::FunctionArguments {

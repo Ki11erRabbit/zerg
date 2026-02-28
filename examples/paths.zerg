@@ -1,5 +1,5 @@
 import paths::item
 
 pub fun main() {
-
+    something();
 }

@@ -296,6 +296,8 @@ impl<'input> Compiler<'input> {
             std::fs::create_dir_all("output").unwrap();
         }
 
+        println!("len: {}", wasm_modules.len());
+
         assert_eq!(file_names.len(), wasm_modules.len());
 
         for (mut module, file_name) in wasm_modules.into_iter().zip(file_names.into_iter()) {

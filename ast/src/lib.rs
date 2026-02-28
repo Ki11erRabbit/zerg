@@ -75,7 +75,7 @@ impl OwnedPath {
     pub fn new(segments: Vec<OwnedPathSegment>, span: Span) -> OwnedPath {
         OwnedPath { segments, span }
     }
-    
+
     pub fn last(&self) -> Option<&OwnedPathSegment> {
         self.segments.last()
     }
@@ -97,9 +97,11 @@ impl From<Vec<String>> for OwnedPath {
 pub use function_resolver::ResolverError;
 
 pub fn desugar_and_typecheck<'input>(files: Vec<(PathBuf, parse_tree::File<'input>)>) -> Result<Vec<desugared_tree::File<'input>>, ResolverError> {
-    let files = files.into_iter()
+    let files: Vec<(PathBuf, parse_tree::File<'input>)> = files.into_iter()
         .map(|(path, file)| (path, desugarer::desugar(file)))
         .collect();
+
+    println!("desugar len: {}", files.len());
 
     let mut resolver = FunctionResolver::new();
     resolver.resolve(files)
