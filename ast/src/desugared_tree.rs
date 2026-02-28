@@ -32,6 +32,10 @@ impl<'input> FunctionArguments<'input> {
     pub fn iter(&self) -> impl Iterator<Item = &FunctionArgument<'input>> {
         self.arguments.iter()
     }
+    
+    pub fn len(&self) -> usize {
+        self.arguments.len()
+    }
 }
 
 #[derive(Debug, Clone)]

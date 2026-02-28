@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use cranelift_codegen::{isa, settings};
-use cranelift_codegen::isa::OwnedTargetIsa;
-use cranelift_codegen::settings::Configurable;
+use wasm_encoder::{CodeSection, ExportKind, ExportSection, FunctionSection, Module, TypeSection, ValType};
 use ast::desugared_tree;
-use crate::compiler::function_state::FunctionState;
+use crate::compiler::function_state::{FunctionState, VariableHandle, VariableLocation};
 
 mod function_state;
 
@@ -11,7 +9,7 @@ pub enum CompileError {
     Many(Vec<CompileError>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Type {
     Bool,
     U8,
@@ -32,36 +30,48 @@ pub enum Type {
 }
 
 struct Definition {
-    public: bool,
-    r#type: Type,
+    type_index: u32,
 }
 
 impl Definition {
-    pub fn new(public: bool, r#type: Type) -> Self {
-        Definition { public, r#type }
+    pub fn new(type_index: u32) -> Self {
+        Definition { type_index }
     }
 }
 
 struct ModuleDef<'input> {
     definitions: HashMap<String, Definition>,
-    module: Option<desugared_tree::File<'input>>,
+    file: Option<desugared_tree::File<'input>>,
 }
 
 impl<'input> ModuleDef<'input> {
-    fn new(module: desugared_tree::File<'input>) -> Self {
+    fn new(file: desugared_tree::File<'input>) -> (Self, WasmModuleGroup) {
+        let module = Module::new();
+        let types = TypeSection::new();
+        let functions = FunctionSection::new();
+        let exports = ExportSection::new();
+        let code = CodeSection::new();
+        let mut wasm_module = WasmModuleGroup {
+            module,
+            types,
+            functions,
+            exports,
+            code,
+        };
+        
         let mut out = Self {
             definitions: HashMap::new(),
-            module: None,
+            file: None,
         };
 
-        for func in module.functions.iter() {
-            out.add_function(func);
+        for (i, func) in file.functions.iter().enumerate() {
+            out.add_function(i as u32, func, &mut wasm_module);
         }
-        out.module = Some(module);
-        out
+        out.file = Some(file);
+        (out, wasm_module)
     }
 
-    fn add_function(&mut self, function: &desugared_tree::Function) {
+    fn add_function(&mut self, index: u32, function: &desugared_tree::Function, module: &mut WasmModuleGroup) {
         let desugared_tree::Function {
             public,
             comptime,
@@ -75,13 +85,26 @@ impl<'input> ModuleDef<'input> {
         }
         let mut parameters = Vec::new();
         for param in arguments.iter() {
-            let ty = convert_type(&param.r#type);
-            parameters.push(ty);
+            let ty = convert_type(&param.r#type).1;
+            if let Some(ty) = ty {
+                parameters.push(ty);
+            }
         }
-        let return_type = Box::new(convert_type(&return_type));
-        let r#type = Type::Function { parameters, return_type };
-        let def = Definition::new(*public, r#type);
+        let return_type = convert_type(&return_type).1;
+        let return_type = if let Some(ty) = return_type {
+            vec![ty]
+        } else {
+            Vec::new()
+        };
+        module.types.ty().function(parameters, return_type);
+
         let name = path.last().as_ref().unwrap().segment.clone();
+        module.functions.function(index);
+        if *public {
+            module.exports.export(&name, ExportKind::Func, index);
+        }
+        
+        let def = Definition::new(index);
         self.definitions.insert(name, def);
     }
 
@@ -90,28 +113,29 @@ impl<'input> ModuleDef<'input> {
     }
 }
 
+struct WasmModuleGroup {
+    module: Module,
+    types: TypeSection,
+    functions: FunctionSection,
+    exports: ExportSection,
+    code: CodeSection,
+}
+
 pub struct Compiler<'input> {
     module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
     state: FunctionState,
-    isa: OwnedTargetIsa,
 }
 
 impl<'input> Compiler<'input> {
     pub fn new() -> Self {
-        let mut flag_builder = settings::builder();
-        flag_builder.set("opt_level", "none").unwrap();
-        let flags = settings::Flags::new(flag_builder);
-
-        let isa = isa::lookup_by_name("wasm32").unwrap().finish(flags).unwrap();
-
         Self {
             module_to_def: HashMap::new(),
             state: FunctionState::new(),
-            isa,
         }
     }
 
-    fn load_files(&mut self, files: Vec<desugared_tree::File<'input>>) {
+    fn load_files(&mut self, files: Vec<desugared_tree::File<'input>>) -> Vec<WasmModuleGroup> {
+        let mut wasm_modules = Vec::new();
         for file in files {
             let module_path = file.file_path.iter()
                 .map(|s| s.to_string_lossy().to_string())
@@ -121,19 +145,21 @@ impl<'input> Compiler<'input> {
                     s
                 })
                 .collect::<Vec<String>>();
-            let module = ModuleDef::new(file);
+            let (module_def, wasm_module) = ModuleDef::new(file);
 
-            self.module_to_def.insert(module_path, module);
+            self.module_to_def.insert(module_path, module_def);
+            wasm_modules.push(wasm_module);
         }
+        wasm_modules
     }
 
     pub fn compile_files(&mut self, files: Vec<desugared_tree::File<'input>>) -> Result<(), CompileError> {
-        self.load_files(files.clone());
+        let mut wasm_modules = self.load_files(files.clone());
 
         let mut errors: Vec<CompileError> = Vec::new();
 
-        for file in files {
-            match self.compile_file(file) {
+        for (file, module) in files.into_iter().zip(wasm_modules.iter_mut()) {
+            match self.compile_file(module, file) {
                 Ok(_) => (),
                 Err(error) => errors.push(error),
             }
@@ -144,35 +170,89 @@ impl<'input> Compiler<'input> {
         Ok(())
     }
 
-    fn compile_file(&mut self, file: desugared_tree::File<'input>) -> Result<(), CompileError> {
+    fn compile_file(&mut self, module: &mut WasmModuleGroup, file: desugared_tree::File<'input>) -> Result<(), CompileError> {
+        let desugared_tree::File { functions, .. } = file;
+        let mut errors: Vec<CompileError> = Vec::new();
+        for func in functions {
+            match self.compile_function(module, func) {
+                Ok(_) => (),
+                Err(error) => errors.push(error),
+            }
+        }
 
+        if !errors.is_empty() {
+            return Err(CompileError::Many(errors));
+        }
+        Ok(())
+    }
+
+    fn compile_function(&mut self, module: &mut WasmModuleGroup, function: desugared_tree::Function) -> Result<(), CompileError> {
+        let desugared_tree::Function {
+            arguments,
+            body,
+            ..
+        } = function;
+        for arg in arguments.iter() {
+            let ty = convert_type(&arg.r#type).0;
+            let name = arg.name.to_string();
+            let variable = VariableHandle::new(ty);
+            self.state.store(&name, variable);
+        }
+        let local_start = arguments.len();
+        self.bind_block(&body);
+
+
+
+
+        self.state.clear();
+
+        Ok(())
+    }
+
+
+}
+
+
+impl<'input> Compiler<'input> {
+    fn bind_block(&mut self, block: &desugared_tree::Block) {
+        self.state.add_scope();
+        self.state.push();
+        for stmt in block.statements.iter() {
+            match stmt {
+                desugared_tree::Statement::Let { name, r#type, expr, .. } => {
+
+                }
+            }
+            _ => {}
+        }
+        self.state.pop();
     }
 }
 
 
 
-fn convert_type(r#type: &desugared_tree::Type) -> Type {
+fn convert_type(r#type: &desugared_tree::Type) -> (Type, Option<ValType>) {
     match r#type {
-        desugared_tree::Type::I8(_) => Type::I8,
-        desugared_tree::Type::I16(_) => Type::I16,
-        desugared_tree::Type::I32(_) => Type::I32,
-        desugared_tree::Type::I64(_) => Type::I64,
-        desugared_tree::Type::U8(_) => Type::U8,
-        desugared_tree::Type::U16(_) => Type::U16,
-        desugared_tree::Type::U32(_) => Type::U32,
-        desugared_tree::Type::U64(_) => Type::U64,
-        desugared_tree::Type::F32(_) => Type::F32,
-        desugared_tree::Type::F64(_) => Type::F64,
-        desugared_tree::Type::Unit(_) => Type::Unit,
-        desugared_tree::Type::Bool(_) => Type::Bool,
+        desugared_tree::Type::I8(_) => (Type::I8, Some(ValType::I32)),
+        desugared_tree::Type::I16(_) => (Type::I16, Some(ValType::I32)),
+        desugared_tree::Type::I32(_) => (Type::I32, Some(ValType::I32)),
+        desugared_tree::Type::I64(_) => (Type::I64, Some(ValType::I64)),
+        desugared_tree::Type::U8(_) => (Type::U8, Some(ValType::I32)),
+        desugared_tree::Type::U16(_) => (Type::U16, Some(ValType::I32)),
+        desugared_tree::Type::U32(_) => (Type::U32, Some(ValType::I32)),
+        desugared_tree::Type::U64(_) => (Type::U64, Some(ValType::I64)),
+        desugared_tree::Type::F32(_) => (Type::F32, Some(ValType::F32)),
+        desugared_tree::Type::F64(_) => (Type::F64, Some(ValType::F64)),
+        desugared_tree::Type::Unit(_) => (Type::Unit, None),
+        desugared_tree::Type::Bool(_) => (Type::Bool, Some(ValType::I32)),
         desugared_tree::Type::Function { args, r#return, .. } => {
-            let parameters = args.iter().map(|param| convert_type(&param)).collect();
-            let return_type = Box::new(convert_type(&r#return));
-            Type::Function { parameters, return_type }
+            let parameters = args.iter().map(|param| convert_type(&param).0).collect();
+            let return_type = Box::new(convert_type(&r#return).0);
+            (Type::Function { parameters, return_type }, Some(ValType::I64))
         }
         x => {
             println!("TODO: handle {:?}", x);
-            Type::Unit
+            (Type::Unit, None)
         }
     }
 }
