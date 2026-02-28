@@ -134,6 +134,7 @@ pub enum Expression<'input> {
         name: OwnedPath,
         args: Vec<Expression<'input>>,
         return_type: Type<'input>,
+        function_type: Type<'input>,
         span: Span,
     },
     IfExpression(IfExpression<'input>),

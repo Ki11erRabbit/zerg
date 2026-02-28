@@ -399,6 +399,18 @@ impl FunctionResolver {
         }
     }
 
+    fn signature_to_desugared_type(sig: &FunctionSignature, span: Span) -> desugared_tree::Type<'static> {
+        let args = sig.argument_types.iter()
+            .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
+            .collect();
+        let return_type = Self::typeinfo_to_desugared_type(&sig.return_type, span);
+        desugared_tree::Type::Function {
+            args,
+            r#return: Box::new(return_type),
+            span,
+        }
+    }
+
     fn parse_tree_type_to_typeinfo(r#type: &parse_tree::Type) -> TypeInfo {
         match r#type {
             parse_tree::Type::U8(_) => TypeInfo::U8,
@@ -792,8 +804,8 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type
-                let return_type = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
                     // Collect argument types
                     let arg_types: Vec<_> = args.iter()
                         .map(|e| Self::get_expression_type(e))
@@ -801,21 +813,34 @@ impl FunctionResolver {
                         .unwrap_or_default();
                     // Try to match generics
                     let generics = Self::match_generics(&sig.argument_types, &arg_types);
-                    let resolved_return = if let Some(generics) = generics {
-                        let substituted = Self::substitute_generics(&sig.return_type, &generics);
-                        Self::typeinfo_to_desugared_type(&substituted, span)
+                    let (resolved_return, func_type) = if let Some(generics) = generics {
+                        let substituted_return = Self::substitute_generics(&sig.return_type, &generics);
+                        let substituted_sig = FunctionSignature {
+                            argument_types: sig.argument_types.iter()
+                                .map(|t| Self::substitute_generics(t, &generics))
+                                .collect(),
+                            return_type: substituted_return.clone(),
+                        };
+                        (
+                            Self::typeinfo_to_desugared_type(&substituted_return, span),
+                            Self::signature_to_desugared_type(&substituted_sig, span)
+                        )
                     } else {
-                        Self::typeinfo_to_desugared_type(&sig.return_type, span)
+                        (
+                            Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                            Self::signature_to_desugared_type(&sig, span)
+                        )
                     };
-                    resolved_return
+                    (resolved_return, func_type)
                 } else {
-                    desugared_tree::Type::Unit(span)
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
                 };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
                     return_type,
+                    function_type,
                     span,
                 }
             }
@@ -872,15 +897,21 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type
-                let return_type = self.function_signatures.get(&resolved_path)
-                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
-                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    (
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                        Self::signature_to_desugared_type(&sig, span)
+                    )
+                } else {
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
+                };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
                     return_type,
+                    function_type,
                     span,
                 }
             }
@@ -954,15 +985,21 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type
-                let return_type = self.function_signatures.get(&resolved_path)
-                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
-                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    (
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                        Self::signature_to_desugared_type(&sig, span)
+                    )
+                } else {
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
+                };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
                     return_type,
+                    function_type,
                     span,
                 }
             }
@@ -1000,15 +1037,21 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type
-                let return_type = self.function_signatures.get(&resolved_path)
-                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
-                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    (
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                        Self::signature_to_desugared_type(&sig, span)
+                    )
+                } else {
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
+                };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
                     return_type,
+                    function_type,
                     span,
                 }
             }
@@ -1046,19 +1089,26 @@ impl FunctionResolver {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type
-                let return_type = self.function_signatures.get(&resolved_path)
-                    .map(|sig| Self::typeinfo_to_desugared_type(&sig.return_type, span))
-                    .unwrap_or_else(|| desugared_tree::Type::Unit(span));
+                // Look up the function signature to get the return type and function type
+                let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
+                    (
+                        Self::typeinfo_to_desugared_type(&sig.return_type, span),
+                        Self::signature_to_desugared_type(&sig, span)
+                    )
+                } else {
+                    (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
+                };
 
                 desugared_tree::Expression::FunctionCall {
                     name: OwnedPath::from(resolved_path),
                     args,
                     return_type,
+                    function_type,
                     span,
                 }
             }
             parse_tree::Expression::IfExpression(if_expr) => desugared_tree::Expression::IfExpression(self.resolve_if_expression(path, if_expr, in_comptime)?),
+
             parse_tree::Expression::DottedFunctionCall { .. } => unreachable!("DotedFunctionCall"),
         };
         Ok(expr)

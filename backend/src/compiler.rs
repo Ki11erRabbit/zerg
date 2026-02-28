@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use wasm_encoder::{BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, ImportSection, Instruction, Module, TypeSection, ValType};
-use ast::desugared_tree;
+use ast::{desugared_tree, Path};
 use crate::compiler::function_state::{FunctionState, VariableLocation};
 
 mod function_state;
@@ -41,7 +42,9 @@ impl Definition {
 }
 
 struct ModuleDef<'input> {
+    name: Vec<String>,
     definitions: HashMap<String, Definition>,
+    imports: HashMap<Vec<String>, u32>,
     file: Option<desugared_tree::File<'input>>,
 }
 
@@ -60,15 +63,31 @@ impl<'input> ModuleDef<'input> {
             exports,
             imports,
             code,
+            next_function_index: 0,
         };
+
+        let name = file.file_path.iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .map(|s| if s.contains(".zerg") {
+                s.replace(".zerg", "")
+            } else {
+                s
+            })
+            .collect::<Vec<String>>();
         
         let mut out = Self {
+            name,
             definitions: HashMap::new(),
+            imports: HashMap::new(),
             file: None,
         };
 
+        for func in file.functions.iter() {
+            out.load_block_imports(&mut wasm_module, &func.body)
+        }
+
         for (i, func) in file.functions.iter().enumerate() {
-            out.add_function(i as u32, func, &mut wasm_module);
+            out.add_function(wasm_module.next_function_index + i as u32, func, &mut wasm_module);
         }
         out.file = Some(file);
         (out, wasm_module)
@@ -76,6 +95,20 @@ impl<'input> ModuleDef<'input> {
 
     pub fn get_definition(&self, name: &str) -> Option<&Definition> {
         self.definitions.get(name)
+    }
+
+    fn import_function(&mut self, module: &mut WasmModuleGroup, path: Vec<String>, args: Vec<ValType>, ret: Vec<ValType>) -> u32 {
+        let type_index = module.types.len();
+        module.types.ty().function(args, ret);
+        let Some((end, last)) = path.split_last() else {
+            panic!("Import path must contain 2 elements");
+        };
+        module.imports.import(&last.join("::"), end, EntityType::Function(type_index));
+        let out = module.next_function_index;
+        module.next_function_index += 1;
+        self.imports.insert(path, out);
+
+        out
     }
 
     fn add_function(&mut self, index: u32, function: &desugared_tree::Function, module: &mut WasmModuleGroup) {
@@ -118,6 +151,74 @@ impl<'input> ModuleDef<'input> {
         let def = Definition::new(index, r#type);
         self.definitions.insert(name, def);
     }
+
+    fn load_block_imports(&mut self, module: &mut WasmModuleGroup, block: &desugared_tree::Block) {
+        for stmt in block.statements.iter() {
+            match stmt {
+                desugared_tree::Statement::Let { expr, .. } => {
+                    self.load_expr_imports(module, expr);
+                }
+                desugared_tree::Statement::Expression { expr, .. } => {
+                    self.load_expr_imports(module, expr);
+                }
+                desugared_tree::Statement::Assignment { target, expr, .. } => {
+                    self.load_expr_imports(module, target);
+                    self.load_expr_imports(module, expr);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn load_expr_imports(&mut self, module: &mut WasmModuleGroup, expr: &desugared_tree::Expression) {
+        match expr {
+            desugared_tree::Expression::FunctionCall { name, args, function_type, .. } => {
+                for arg in args {
+                    self.load_expr_imports(module, arg);
+                }
+
+                let mut module_path = name.to_vec_strings();
+                let _ = module_path.pop().unwrap();
+                if module_path == self.name {
+                    return
+                }
+                let r#type = convert_type(function_type).0;
+                let (args, ret) = create_function_type(r#type);
+                self.import_function(module, name.to_vec_strings(), args, ret);
+            }
+            desugared_tree::Expression::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.load_expr_imports(module, value);
+                }
+            }
+            desugared_tree::Expression::Parenthesized { expr, .. } => {
+                self.load_expr_imports(module, expr);
+            }
+            desugared_tree::Expression::IfExpression(if_expr) => {
+                self.load_if_expr_imports(module, if_expr);
+            }
+            _ => {}
+        }
+    }
+
+    fn load_if_expr_imports(&mut self, module: &mut WasmModuleGroup, if_expr: &desugared_tree::IfExpression) {
+        let desugared_tree::IfExpression {
+            condition,
+            then_block,
+            elifs,
+            else_block,
+            ..
+        } = if_expr;
+        self.load_expr_imports(module, condition);
+        self.load_block_imports(module, then_block);
+        for (condition, then_block) in elifs {
+            self.load_expr_imports(module, condition);
+            self.load_block_imports(module, then_block);
+        }
+        if let Some(else_block) = else_block {
+            self.load_block_imports(module, else_block);
+        }
+    }
 }
 
 struct WasmModuleGroup {
@@ -127,6 +228,7 @@ struct WasmModuleGroup {
     exports: ExportSection,
     imports: ImportSection,
     code: CodeSection,
+    next_function_index: u32,
 }
 
 pub struct Compiler<'input> {
@@ -168,14 +270,48 @@ impl<'input> Compiler<'input> {
 
         let mut errors: Vec<CompileError> = Vec::new();
 
+        let mut file_names = Vec::with_capacity(wasm_modules.len());
         for (file, module) in files.into_iter().zip(wasm_modules.iter_mut()) {
+            let file_path = file.file_path.iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| s.replace(".zerg", ".wasm"))
+                .collect::<Vec<String>>();
+
             match self.compile_file(module, file) {
-                Ok(_) => (),
+                Ok(_) => {
+                    file_names.push(file_path);
+                },
                 Err(error) => errors.push(error),
             }
         }
         if !errors.is_empty() {
             return Err(CompileError::Many(errors));
+        }
+
+        if PathBuf::from("output").exists() {
+            std::fs::remove_dir_all("output").unwrap();
+            std::fs::create_dir_all("output").unwrap();
+        } else {
+            std::fs::create_dir_all("output").unwrap();
+        }
+
+        assert_eq!(file_names.len(), wasm_modules.len());
+
+        for (mut module, file_name) in wasm_modules.into_iter().zip(file_names.into_iter()) {
+            let mut path_buf = PathBuf::from("output");
+            for part in file_name {
+                path_buf.push(part);
+            }
+            if path_buf.as_path().exists() {
+                std::fs::remove_dir_all(path_buf.as_path()).unwrap();
+            }
+            module.module.section(&module.imports);
+            module.module.section(&module.exports);
+            module.module.section(&module.code);
+            module.module.section(&module.functions);
+            module.module.section(&module.types);
+
+            std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
         }
 
         Ok(())
@@ -371,14 +507,16 @@ impl<'input> Compiler<'input> {
                 if module_path == self.current_path {
                     function.instruction(&Instruction::Call(def.type_index));
                 } else {
-                    let (args, ret) = create_function_type(def.r#type);
-                    let index = module.types.len();
-                    module.types.ty().function(args, ret);
-                    module.imports.import(&module_path.join("::"), &name, EntityType::Function(index));
-                    function.instruction(&Instruction::Call(def.type_index));
+                    let mut path = module_path;
+                    path.push(name);
+                    let def_index = module_def.imports.get(&path).unwrap();
+
+                    function.instruction(&Instruction::Call(*def_index));
                 }
                 // TODO: check if function can yield a value. If it does and we don't yield, pop it
-
+            }
+            desugared_tree::Expression::ConstantString { .. } => {
+                todo!("string literal")
             }
         }
 
