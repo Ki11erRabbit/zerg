@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use parser::parse;
 use ast::parse_tree::{File as AstFile, TopLevelStatement};
+use ast::ResolverError;
 
 #[derive(Debug)]
 enum CollectError {
@@ -57,6 +58,17 @@ fn main() {
     }
 
     let result = ast::desugar_and_typecheck(files);
+    match result {
+        Ok(_) => (),
+        Err(ResolverError::Many(errors)) => {
+            for e in errors {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+        }
+    }
 }
 
 /// Iteratively collect file paths and contents using explicit stack, storing (PathBuf, String)
@@ -95,16 +107,17 @@ fn collect_files_by_ref(
                     if let Some(import_path) = import_path_opt {
                         let import_vec = import_path.to_vec_strings();
                         let mut dir = base_dir.clone();
-                        for seg in &import_vec {
-                            dir.push(seg);
-                        }
-                        if let Ok(entries) = fs::read_dir(&dir) {
-                            for entry in entries.flatten() {
-                                let path = entry.path();
-                                if path.extension().map_or(false, |ext| ext == "zerg") {
-                                    stack.push((path, dir.clone()));
-                                }
+                        for (i, seg) in import_vec.iter().enumerate() {
+                            if i != import_vec.len() - 1 {
+                                dir.push(seg);
+                            } else {
+                                dir.push(format!("{seg}.zerg", ));
                             }
+                        }
+                        if dir.exists() {
+                            let path = dir.clone();
+                            dir.pop();
+                            stack.push((path, dir))
                         }
                     }
                 }

@@ -260,10 +260,9 @@ impl<'input> Lexer<'input> {
                  c if c.is_ascii_alphabetic() || c == '_' => {
                     let mut end = start;
                      while let Some((next, chr)) = self.peek() {
-                         let next = *next;
+                         end = *next;
                          let chr = *chr;
-                         if chr.is_ascii_alphanumeric() || chr == '_' {
-                             end = next;
+                         if chr.is_ascii_alphanumeric() || chr == '_' || chr.is_ascii_digit() {
                              self.next_token();
                          } else {
                              break;
