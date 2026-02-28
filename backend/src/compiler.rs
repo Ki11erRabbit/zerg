@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use wasm_encoder::{CodeSection, ExportKind, ExportSection, Function, FunctionSection, Module, TypeSection, ValType};
+use wasm_encoder::{BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, Instruction, Module, TypeSection, ValType};
 use ast::desugared_tree;
-use crate::compiler::function_state::{FunctionState, VariableHandle, VariableLocation};
+use crate::compiler::function_state::{FunctionState, VariableLocation};
 
 mod function_state;
 
@@ -201,6 +201,9 @@ impl<'input> Compiler<'input> {
         let locals = self.state.local_definitions();
         let mut function = Function::new(locals);
 
+        self.compile_block(module, &mut function, body, false)?;
+        function.instruction(&Instruction::End);
+
         self.state.clear();
 
         module.code.function(&function);
@@ -208,6 +211,176 @@ impl<'input> Compiler<'input> {
         Ok(())
     }
 
+
+    fn compile_block(
+        &mut self,
+        module: &mut WasmModuleGroup,
+        function: &mut Function,
+        block: desugared_tree::Block,
+        yield_value: bool,
+    ) -> Result<(), CompileError> {
+        let mut errors: Vec<CompileError> = Vec::new();
+        let statements_len = block.statements.len();
+        for (i, stmt) in block.statements.into_iter().enumerate() {
+            let yield_value = if yield_value && i == statements_len - 1 {
+                true
+            } else {
+                false
+            };
+
+            match self.compile_statement(module, function, stmt, yield_value) {
+                Ok(_) => {},
+                Err(error) => errors.push(error),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(CompileError::Many(errors));
+        }
+        Ok(())
+    }
+
+    fn compile_statement(
+        &mut self,
+        module: &mut WasmModuleGroup,
+        function: &mut Function,
+        stmt: desugared_tree::Statement,
+        yield_value: bool,
+    ) -> Result<(), CompileError> {
+        match stmt {
+            desugared_tree::Statement::Let { name, expr, .. } => {
+                self.compile_expr(module, function, expr, true)?;
+                let index = self.state.get(&name).unwrap();
+                function.instruction(&Instruction::LocalSet(index));
+            }
+            desugared_tree::Statement::Expression { expr, .. } => {
+                self.compile_expr(module, function, expr, yield_value)?;
+            }
+            desugared_tree::Statement::Assignment { target, expr, .. } => {
+                match target {
+                    desugared_tree::Expression::Variable { name, .. } => {
+                        self.compile_expr(module, function, expr, true)?;
+                        let index = self.state.get(&name).unwrap();
+                        function.instruction(&Instruction::LocalGet(index));
+                    }
+                    _ => todo!("other assignment target"),
+                }
+            }
+            desugared_tree::Statement::Comptime { .. } => {
+                todo!("comptime statement")
+            }
+        }
+
+        Ok(())
+    }
+
+    fn compile_expr(
+        &mut self,
+        module: &mut WasmModuleGroup,
+        function: &mut Function,
+        expr: desugared_tree::Expression,
+        yield_value: bool,
+    ) -> Result<(), CompileError> {
+        match expr {
+            desugared_tree::Expression::Variable { name, .. } => {
+                if yield_value {
+                    let index = self.state.get(&name).unwrap();
+                    function.instruction(&Instruction::LocalGet(index));
+                }
+            }
+            desugared_tree::Expression::Parenthesized { expr, .. } => {
+                self.compile_expr(module, function, *expr, yield_value)?;
+            }
+            desugared_tree::Expression::ConstantNumber { value, r#type, .. } => {
+                if !yield_value {
+                    return Ok(())
+                }
+                let r#type = convert_type(&r#type).0;
+                match r#type {
+                    Type::U8 | Type::I8 | Type::U16 | Type::I16 | Type::I32 => {
+                        let value = value.parse().unwrap();
+                        function.instruction(&Instruction::I32Const(value));
+                    }
+                    Type::U32 => {
+                        let value: u32 = value.parse().unwrap();
+                        let value = i32::from_ne_bytes(value.to_ne_bytes());
+                        function.instruction(&Instruction::I32Const(value));
+                    }
+                    Type::U64 => {
+                        let value: u64 = value.parse().unwrap();
+                        let value = i64::from_ne_bytes(value.to_ne_bytes());
+                        function.instruction(&Instruction::I64Const(value));
+                    }
+                    Type::I64 => {
+                        let value: i64 = value.parse().unwrap();
+                        function.instruction(&Instruction::I64Const(value));
+                    }
+                    Type::F32 => {
+                        let value: f32 = value.parse().unwrap();
+                        function.instruction(&Instruction::F32Const(Ieee32::from(value)));
+                    }
+                    Type::F64 => {
+                        let value: f64 = value.parse().unwrap();
+                        function.instruction(&Instruction::F64Const(Ieee64::from(value)));
+                    }
+                    _ => unreachable!("Non numeric type in constant number")
+                }
+            }
+            desugared_tree::Expression::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.compile_expr(module, function, *value, true)?;
+                    function.instruction(&Instruction::Return);
+                } else {
+                    function.instruction(&Instruction::Return);
+                }
+            }
+            desugared_tree::Expression::IfExpression(if_expr) => {
+                self.compile_if_expr(module, function, if_expr, yield_value)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn compile_if_expr(
+        &mut self,
+        module: &mut WasmModuleGroup,
+        function: &mut Function,
+        expr: desugared_tree::IfExpression,
+        yield_value: bool,
+    ) -> Result<(), CompileError> {
+        let desugared_tree::IfExpression {
+            condition,
+            then_block,
+            elifs,
+            else_block,
+            return_type,
+            ..
+        } = expr;
+
+        self.compile_expr(module, function, *condition, true)?;
+
+        let block_type = if let Some(r#type) = convert_type(&return_type).1 {
+            BlockType::Result(r#type)
+        } else {
+            BlockType::Empty
+        };
+
+        function.instruction(&Instruction::If(block_type));
+        self.compile_block(module, function, then_block, yield_value)?;
+        for (condition, then_block) in elifs {
+            function.instruction(&Instruction::Else);
+            self.compile_expr(module, function, condition, true)?;
+            function.instruction(&Instruction::If(block_type));
+            self.compile_block(module, function, then_block, yield_value)?;
+        }
+        if let Some(else_block) = else_block {
+            function.instruction(&Instruction::Else);
+            self.compile_block(module, function, else_block, yield_value)?;
+        }
+        function.instruction(&Instruction::End);
+
+        Ok(())
+    }
 
 }
 
