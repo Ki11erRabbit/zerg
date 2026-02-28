@@ -7,3 +7,4 @@ edition = "2024"
 parser = { workspace = true }
 ast = { workspace = true }
 clap = { version = "4.5.60", features = ["derive"] }
+backend = { workspace = true }

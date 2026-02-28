@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use parser::parse;
 use ast::parse_tree::{File as AstFile, TopLevelStatement};
 use ast::ResolverError;
+use backend::Compiler;
 
 #[derive(Debug)]
 enum CollectError {
@@ -58,17 +59,22 @@ fn main() {
     }
 
     let result = ast::desugar_and_typecheck(files);
-    match result {
-        Ok(_) => (),
+    let files = match result {
+        Ok(files) => files,
         Err(ResolverError::Many(errors)) => {
             for e in errors {
                 eprintln!("Error: {}", e);
             }
+            return;
         }
         Err(e) => {
             eprintln!("Error: {}", e);
+            return;
         }
-    }
+    };
+
+    let mut compiler = Compiler::new();
+    compiler.compile_files(files).unwrap();
 }
 
 /// Iteratively collect file paths and contents using explicit stack, storing (PathBuf, String)

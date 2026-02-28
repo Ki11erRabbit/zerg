@@ -6,6 +6,7 @@ use crate::compiler::function_state::{FunctionState, VariableLocation};
 
 mod function_state;
 
+#[derive(Debug)]
 pub enum CompileError {
     Many(Vec<CompileError>),
 }
@@ -103,7 +104,7 @@ impl<'input> ModuleDef<'input> {
         let Some((end, last)) = path.split_last() else {
             panic!("Import path must contain 2 elements");
         };
-        module.imports.import(&last.join("::"), end, EntityType::Function(type_index));
+        module.imports.import(&last.join("."), end, EntityType::Function(type_index));
         let out = module.next_function_index;
         module.next_function_index += 1;
         self.imports.insert(path, out);
@@ -299,9 +300,7 @@ impl<'input> Compiler<'input> {
 
         for (mut module, file_name) in wasm_modules.into_iter().zip(file_names.into_iter()) {
             let mut path_buf = PathBuf::from("output");
-            for part in file_name {
-                path_buf.push(part);
-            }
+            path_buf.push(file_name.join("."));
             if path_buf.as_path().exists() {
                 std::fs::remove_dir_all(path_buf.as_path()).unwrap();
             }
@@ -339,6 +338,13 @@ impl<'input> Compiler<'input> {
         if !errors.is_empty() {
             return Err(CompileError::Many(errors));
         }
+
+        let def = self.module_to_def.get(&self.current_path).unwrap();
+        // if there is a main function, export it as start.
+        if let Some(main) = def.get_definition("main") {
+            module.exports.export("_start", ExportKind::Func, main.type_index);
+        }
+
         Ok(())
     }
 
