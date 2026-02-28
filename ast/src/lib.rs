@@ -101,8 +101,6 @@ pub fn desugar_and_typecheck<'input>(files: Vec<(PathBuf, parse_tree::File<'inpu
         .map(|(path, file)| (path, desugarer::desugar(file)))
         .collect();
 
-    println!("desugar len: {}", files.len());
-
     let mut resolver = FunctionResolver::new();
     resolver.resolve(files)
 }

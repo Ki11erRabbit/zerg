@@ -296,8 +296,6 @@ impl<'input> Compiler<'input> {
             std::fs::create_dir_all("output").unwrap();
         }
 
-        println!("len: {}", wasm_modules.len());
-
         assert_eq!(file_names.len(), wasm_modules.len());
 
         for (mut module, file_name) in wasm_modules.into_iter().zip(file_names.into_iter()) {
@@ -512,15 +510,17 @@ impl<'input> Compiler<'input> {
                 let module_def = self.module_to_def.get(&module_path).unwrap();
                 let def = module_def.get_definition(&name).unwrap();
 
-                if module_path == self.current_path {
-                    function.instruction(&Instruction::Call(def.type_index));
+                let index = if module_path == self.current_path {
+                    def.type_index
                 } else {
+                    let module_def = self.module_to_def.get(&self.current_path).unwrap();
                     let mut path = module_path;
                     path.push(name);
                     let def_index = module_def.imports.get(&path).unwrap();
 
-                    function.instruction(&Instruction::Call(*def_index));
-                }
+                    *def_index
+                };
+                function.instruction(&Instruction::Call(index));
                 // TODO: check if function can yield a value. If it does and we don't yield, pop it
             }
             desugared_tree::Expression::ConstantString { .. } => {

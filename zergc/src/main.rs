@@ -72,7 +72,6 @@ fn main() {
             return;
         }
     };
-    println!("len: {}", files.len());
 
     let mut compiler = Compiler::new();
     compiler.compile_files(files).unwrap();
