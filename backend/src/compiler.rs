@@ -1,8 +1,15 @@
 use std::collections::HashMap;
+use cranelift_codegen::{isa, settings};
+use cranelift_codegen::isa::OwnedTargetIsa;
+use cranelift_codegen::settings::Configurable;
 use ast::desugared_tree;
 use crate::compiler::function_state::FunctionState;
 
 mod function_state;
+
+pub enum CompileError {
+    Many(Vec<CompileError>),
+}
 
 #[derive(Clone)]
 pub enum Type {
@@ -35,18 +42,26 @@ impl Definition {
     }
 }
 
-struct ModuleDef {
-    definitions: HashMap<String, Definition>
+struct ModuleDef<'input> {
+    definitions: HashMap<String, Definition>,
+    module: Option<desugared_tree::File<'input>>,
 }
 
-impl ModuleDef {
-    fn new() -> ModuleDef {
-        Self {
-            definitions: HashMap::new()
+impl<'input> ModuleDef<'input> {
+    fn new(module: desugared_tree::File<'input>) -> Self {
+        let mut out = Self {
+            definitions: HashMap::new(),
+            module: None,
+        };
+
+        for func in module.functions.iter() {
+            out.add_function(func);
         }
+        out.module = Some(module);
+        out
     }
 
-    pub fn add_function(&mut self, function: &desugared_tree::Function) {
+    fn add_function(&mut self, function: &desugared_tree::Function) {
         let desugared_tree::Function {
             public,
             comptime,
@@ -75,17 +90,62 @@ impl ModuleDef {
     }
 }
 
-pub struct Compiler {
-    module_to_def: HashMap<Vec<String>, ModuleDef>,
+pub struct Compiler<'input> {
+    module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
     state: FunctionState,
+    isa: OwnedTargetIsa,
 }
 
-impl Compiler {
-    pub fn new() -> Compiler {
-        Compiler {
+impl<'input> Compiler<'input> {
+    pub fn new() -> Self {
+        let mut flag_builder = settings::builder();
+        flag_builder.set("opt_level", "none").unwrap();
+        let flags = settings::Flags::new(flag_builder);
+
+        let isa = isa::lookup_by_name("wasm32").unwrap().finish(flags).unwrap();
+
+        Self {
             module_to_def: HashMap::new(),
             state: FunctionState::new(),
+            isa,
         }
+    }
+
+    fn load_files(&mut self, files: Vec<desugared_tree::File<'input>>) {
+        for file in files {
+            let module_path = file.file_path.iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| if s.contains(".zerg") {
+                    s.replace(".zerg", "")
+                } else {
+                    s
+                })
+                .collect::<Vec<String>>();
+            let module = ModuleDef::new(file);
+
+            self.module_to_def.insert(module_path, module);
+        }
+    }
+
+    pub fn compile_files(&mut self, files: Vec<desugared_tree::File<'input>>) -> Result<(), CompileError> {
+        self.load_files(files.clone());
+
+        let mut errors: Vec<CompileError> = Vec::new();
+
+        for file in files {
+            match self.compile_file(file) {
+                Ok(_) => (),
+                Err(error) => errors.push(error),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(CompileError::Many(errors));
+        }
+        Ok(())
+    }
+
+    fn compile_file(&mut self, file: desugared_tree::File<'input>) -> Result<(), CompileError> {
+
     }
 }
 

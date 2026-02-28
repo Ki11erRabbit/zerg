@@ -1,21 +1,14 @@
 use std::collections::HashMap;
 use crate::compiler::Type;
 
-/// Indicates where a value is currently located in the wasm virtual machine
-pub enum VariableLocation {
-    /// Indicates that the value is a local variable at what index
-    Local(u64),
-    /// Indicates that the value is on the stack and what level it is on.
-    Stack(u64),
-}
 
-pub struct Variable {
+pub struct VariableHandle {
     pub r#type: Type,
-    pub location: VariableLocation,
+    pub handle: Variable,
 }
 
 pub struct Scope {
-    map: HashMap<String, Variable>,
+    map: HashMap<String, VariableHandle>,
 }
 
 impl Scope {
@@ -25,11 +18,11 @@ impl Scope {
         }
     }
     
-    pub fn get(&self, variable_name: &str) -> Option<&Variable> {
+    pub fn get(&self, variable_name: &str) -> Option<&VariableHandle> {
         self.map.get(variable_name)
     }
     
-    pub fn store(&mut self, variable_name: &str, location: Variable) {
+    pub fn store(&mut self, variable_name: &str, location: VariableHandle) {
         self.map.insert(variable_name.to_string(), location);
     }
 }
@@ -45,7 +38,7 @@ impl FunctionState {
         }
     }
     
-    pub fn get(&self, variable_name: &str) -> Option<&Variable> {
+    pub fn get(&self, variable_name: &str) -> Option<&VariableHandle> {
         for scope in self.stack.iter().rev() {
             if let Some(location) = scope.get(variable_name) {
                 return Some(location);
@@ -54,7 +47,7 @@ impl FunctionState {
         None
     }
     
-    pub fn store(&mut self, variable_name: &str, location: Variable) {
+    pub fn store(&mut self, variable_name: &str, location: VariableHandle) {
         self.stack.last_mut().map(|scope| scope.store(variable_name, location));
     }
     

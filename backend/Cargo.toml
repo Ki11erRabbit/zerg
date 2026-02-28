@@ -5,8 +5,5 @@ edition = "2024"
 
 [dependencies]
 ast = { workspace = true }
-cranelift-codegen = "0.129.1"
-cranelift-frontend = "0.129.1"
-cranelift-wasm = "0.112.3"
-cranelift-native = "0.129.1"
-target-lexicon = "0.13.5"
+wasm-encoder = "0.245.1"
+wasmparser = "0.245.1"
