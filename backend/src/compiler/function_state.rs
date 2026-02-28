@@ -2,120 +2,179 @@ use std::collections::HashMap;
 use wasm_encoder::ValType;
 use crate::compiler::Type;
 
-
-pub struct VariableHandle {
-    pub r#type: Type,
-    pub handle: u32,
+pub enum VariableLocation {
+    I32 {
+        index: u32,
+        original_type: Type,
+    },
+    I64 {
+        index: u32,
+        original_type: Type,
+    },
+    F32(u32),
+    F64(u32),
+    FunctionArg {
+        index: u32,
+        original_type: Type,
+    }
 }
 
-impl VariableHandle {
-    pub fn new(r#type: Type) -> VariableHandle {
-        Self { r#type, handle: 0 }
-    }
-    
-    pub fn set_handle(&mut self, handle: u32) {
-        self.handle = handle;
-    }
-}
 
 pub struct Scope {
-    map: HashMap<String, VariableHandle>,
-    next_handle: u32,
+    map: HashMap<String, VariableLocation>,
 }
 
 impl Scope {
-    pub fn new(next_handle: u32) -> Self {
+    pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            next_handle,
         }
     }
 
-    pub fn get(&self, variable_name: &str) -> Option<&VariableHandle> {
+    pub fn get(&self, variable_name: &str) -> Option<&VariableLocation> {
         self.map.get(variable_name)
     }
 
-    pub fn get_mut(&mut self, variable_name: &str) -> Option<&mut VariableHandle> {
+    pub fn get_mut(&mut self, variable_name: &str) -> Option<&mut VariableLocation> {
         self.map.get_mut(variable_name)
     }
 
-    pub fn store(&mut self, variable_name: &str, mut location: VariableHandle) {
-        location.set_handle(self.next_handle);
+    pub fn store(&mut self, variable_name: &str, location: VariableLocation) {
         self.map.insert(variable_name.to_string(), location);
-    }
-
-    /// Checks if this scope has a variable with the same name and type.
-    /// If types, don't align, then we can't replace it
-    /// When Some, it contains the index that can be replaced
-    pub fn can_replace(&self, variable_name: &str, location: &VariableHandle) -> Option<u32> {
-        if let Some(old_location) = self.map.get(variable_name) {
-            if old_location.r#type == location.r#type {
-                return Some(old_location.handle);
-            }
-        }
-        None
-    }
-    
-    pub fn next_handle(&self) -> u32 {
-        self.next_handle
     }
 }
 
 pub struct FunctionState {
     stack: Vec<Scope>,
-    current_scope: usize,
+    function_arguments: u32,
+    i32_var_count: u32,
+    i64_var_count: u32,
+    f32_var_count: u32,
+    f64_var_count: u32,
 }
 
 impl FunctionState {
     pub fn new() -> Self {
         Self {
-            stack: vec![Scope::new(0)],
-            current_scope: 0,
+            stack: vec![Scope::new()],
+            function_arguments: 0,
+            i32_var_count: 0,
+            i64_var_count: 0,
+            f32_var_count: 0,
+            f64_var_count: 0,
         }
     }
 
-    pub fn get(&self, variable_name: &str) -> Option<&VariableHandle> {
-        for scope in self.stack.iter().take(self.current_scope).rev() {
+    pub fn get(&self, variable_name: &str) -> Option<u32> {
+        for scope in self.stack.iter().rev() {
             if let Some(location) = scope.get(variable_name) {
-                return Some(location);
+                let new_location = match location {
+                    VariableLocation::I32 { index, .. } => {
+                        self.function_arguments + index
+                    }
+                    VariableLocation::I64 { index, .. } => {
+                        self.function_arguments + self.i32_var_count + index
+                    }
+                    VariableLocation::F32(index) => {
+                        self.f32_var_count + self.i32_var_count + self.i64_var_count + index
+                    }
+                    VariableLocation::F64(index) => {
+                        self.f32_var_count + self.i32_var_count + self.i64_var_count + self.i64_var_count + index
+                    }
+                    VariableLocation::FunctionArg { index, ..} => {
+                        *index
+                    }
+                };
+                return Some(new_location)
             }
         }
         None
     }
 
-    pub fn store(&mut self, variable_name: &str, mut location: VariableHandle) {
-        for scope in self.stack.iter_mut().take(self.current_scope).rev() {
-            if let Some(handle) = scope.can_replace(variable_name, &location) {
-                let Some(old_location) = scope.get_mut(variable_name) else {
-                    break;
-                };
-                location.set_handle(handle);
-                *old_location = location;
-                return;
+    pub fn store_function_argument(&mut self, variable_name: &str, ty: Type, index: u32) {
+        self.stack[0].store(variable_name, VariableLocation::FunctionArg { index, original_type: ty });
+        self.function_arguments += 1;
+    }
+
+    pub fn store(&mut self, variable_name: &str, ty: Type) {
+        for scope in self.stack.iter_mut().rev() {
+            if let Some(location) = scope.get(variable_name) {
+                // Check to see if we have a compatible variable with same name.
+                match (location, &ty) {
+                    (VariableLocation::I32 { original_type: Type::U8, .. }, Type::U8) => return,
+                    (VariableLocation::I32 { original_type: Type::I8, .. }, Type::I8) => return,
+                    (VariableLocation::I32 { original_type: Type::U16, .. }, Type::U16) => return,
+                    (VariableLocation::I32 { original_type: Type::I16, .. }, Type::I16) => return,
+                    (VariableLocation::I32 { original_type: Type::U32, .. }, Type::U32) => return,
+                    (VariableLocation::I32 { original_type: Type::I32, .. }, Type::I32) => return,
+                    (VariableLocation::I64 { original_type: Type::U64, .. }, Type::U64) => return,
+                    (VariableLocation::I64 { original_type: Type::I64, .. }, Type::I64) => return,
+                    (VariableLocation::F32(_), Type::F32) => return,
+                    (VariableLocation::F64(_), Type::F64) => return,
+                    _ => break,
+                }
             }
         }
 
-        let next_location = self.stack[self.current_scope].next_handle();
-        location.set_handle(next_location);
-        self.stack[self.current_scope].store(variable_name, location);
-    }
-    
-    pub fn add_scope(&mut self) {
-        let next_handle = self.stack[self.current_scope].next_handle();
-        self.stack.push(Scope::new(next_handle));
-        self.current_scope += 1;
+        let location = match &ty {
+            Type::Bool | Type::U8 | Type::I8 | Type::U16 | Type::I16
+            | Type::U32 | Type::I32 | Type::Unit =>  {
+                let location = VariableLocation::I32 {
+                    index: self.i32_var_count,
+                    original_type: ty,
+                };
+                self.i32_var_count += 1;
+                location
+            }
+            Type::U64 | Type::I64 | Type::Function { .. } => {
+                let location = VariableLocation::I64 {
+                    index: self.i64_var_count,
+                    original_type: ty,
+                };
+                self.i64_var_count += 1;
+                location
+            }
+            Type::F32 => {
+                let location = VariableLocation::F32(self.f32_var_count);
+                self.f32_var_count += 1;
+                location
+            }
+            Type::F64 => {
+                let location = VariableLocation::F64(self.f64_var_count);
+                self.f64_var_count += 1;
+                location
+            }
+        };
+
+        self.stack.last_mut().map(|scope| scope.store(variable_name, location));
+
     }
 
+
     pub fn push(&mut self) {
-        self.current_scope += 1;
+        self.stack.push(Scope::new());
     }
 
     pub fn pop(&mut self) {
-        self.current_scope -= 1;
+        self.stack.pop();
     }
-    
+
     pub fn clear(&mut self) {
         self.stack.clear();
-        self.stack.push(Scope::new(0));
+        self.stack.push(Scope::new());
+        self.i32_var_count = 0;
+        self.i64_var_count = 0;
+        self.f32_var_count = 0;
+        self.f64_var_count = 0;
+        self.function_arguments = 0;
+    }
+
+    pub fn local_definitions(&self) -> Vec<(u32, ValType)> {
+        vec![
+            (self.i32_var_count, ValType::I32),
+            (self.i64_var_count, ValType::I64),
+            (self.f32_var_count, ValType::F32),
+            (self.f64_var_count, ValType::F64)
+        ]
     }
 }

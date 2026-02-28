@@ -192,13 +192,10 @@ impl<'input> Compiler<'input> {
             body,
             ..
         } = function;
-        for arg in arguments.iter() {
+        for (i, arg) in arguments.iter().enumerate() {
             let ty = convert_type(&arg.r#type).0;
-            let name = arg.name.to_string();
-            let variable = VariableHandle::new(ty);
-            self.state.store(&name, variable);
+            self.state.store_function_argument(&arg.name, ty, i as u32);
         }
-        let local_start = arguments.len();
         self.bind_block(&body);
 
 
@@ -215,11 +212,12 @@ impl<'input> Compiler<'input> {
 
 impl<'input> Compiler<'input> {
     fn bind_block(&mut self, block: &desugared_tree::Block) {
-        self.state.add_scope();
         self.state.push();
         for stmt in block.statements.iter() {
             match stmt {
                 desugared_tree::Statement::Let { name, r#type, expr, .. } => {
+                    let ty = convert_type(&r#type).0;
+                    self.state.store(&name, ty);
 
                 }
             }
