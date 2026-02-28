@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use wasm_encoder::{BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, Instruction, Module, TypeSection, ValType};
+use wasm_encoder::{BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, ImportSection, Instruction, Module, TypeSection, ValType};
 use ast::desugared_tree;
 use crate::compiler::function_state::{FunctionState, VariableLocation};
 
@@ -31,11 +31,12 @@ pub enum Type {
 
 struct Definition {
     type_index: u32,
+    r#type: Type,
 }
 
 impl Definition {
-    pub fn new(type_index: u32) -> Self {
-        Definition { type_index }
+    pub fn new(type_index: u32, r#type: Type) -> Self {
+        Definition { type_index, r#type }
     }
 }
 
@@ -50,12 +51,14 @@ impl<'input> ModuleDef<'input> {
         let types = TypeSection::new();
         let functions = FunctionSection::new();
         let exports = ExportSection::new();
+        let imports = ImportSection::new();
         let code = CodeSection::new();
         let mut wasm_module = WasmModuleGroup {
             module,
             types,
             functions,
             exports,
+            imports,
             code,
         };
         
@@ -71,6 +74,10 @@ impl<'input> ModuleDef<'input> {
         (out, wasm_module)
     }
 
+    pub fn get_definition(&self, name: &str) -> Option<&Definition> {
+        self.definitions.get(name)
+    }
+
     fn add_function(&mut self, index: u32, function: &desugared_tree::Function, module: &mut WasmModuleGroup) {
         let desugared_tree::Function {
             public,
@@ -84,13 +91,15 @@ impl<'input> ModuleDef<'input> {
             return
         }
         let mut parameters = Vec::new();
+        let mut type_parameters = Vec::new();
         for param in arguments.iter() {
-            let ty = convert_type(&param.r#type).1;
+            let (local, ty) = convert_type(&param.r#type);
+            type_parameters.push(local);
             if let Some(ty) = ty {
                 parameters.push(ty);
             }
         }
-        let return_type = convert_type(&return_type).1;
+        let (local, return_type) = convert_type(&return_type);
         let return_type = if let Some(ty) = return_type {
             vec![ty]
         } else {
@@ -103,13 +112,11 @@ impl<'input> ModuleDef<'input> {
         if *public {
             module.exports.export(&name, ExportKind::Func, index);
         }
-        
-        let def = Definition::new(index);
-        self.definitions.insert(name, def);
-    }
 
-    pub fn get_definition(&self, name: &str) -> Option<&Definition> {
-        self.definitions.get(name)
+        let r#type = Type::Function { parameters: type_parameters, return_type: Box::new(local) };
+        
+        let def = Definition::new(index, r#type);
+        self.definitions.insert(name, def);
     }
 }
 
@@ -118,12 +125,14 @@ struct WasmModuleGroup {
     types: TypeSection,
     functions: FunctionSection,
     exports: ExportSection,
+    imports: ImportSection,
     code: CodeSection,
 }
 
 pub struct Compiler<'input> {
     module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
     state: FunctionState,
+    current_path: Vec<String>,
 }
 
 impl<'input> Compiler<'input> {
@@ -131,6 +140,7 @@ impl<'input> Compiler<'input> {
         Self {
             module_to_def: HashMap::new(),
             state: FunctionState::new(),
+            current_path: Vec::new(),
         }
     }
 
@@ -172,7 +182,16 @@ impl<'input> Compiler<'input> {
     }
 
     fn compile_file(&mut self, module: &mut WasmModuleGroup, file: desugared_tree::File<'input>) -> Result<(), CompileError> {
-        let desugared_tree::File { functions, .. } = file;
+        let desugared_tree::File { functions, file_path, .. } = file;
+        let module_path = file_path.iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .map(|s| if s.contains(".zerg") {
+                s.replace(".zerg", "")
+            } else {
+                s
+            })
+            .collect::<Vec<String>>();
+        self.current_path = module_path;
         let mut errors: Vec<CompileError> = Vec::new();
         for func in functions {
             match self.compile_function(module, func) {
@@ -336,6 +355,31 @@ impl<'input> Compiler<'input> {
             desugared_tree::Expression::IfExpression(if_expr) => {
                 self.compile_if_expr(module, function, if_expr, yield_value)?;
             }
+            desugared_tree::Expression::FunctionCall { name, args, .. } => {
+                // TODO: check if function being called is inline, and evaluate body of function instead
+
+                for arg in args {
+                    self.compile_expr(module, function, arg, true)?;
+                }
+
+                let mut module_path = name.to_vec_strings();
+                let name = module_path.pop().unwrap();
+
+                let module_def = self.module_to_def.get(&module_path).unwrap();
+                let def = module_def.get_definition(&name).unwrap();
+
+                if module_path == self.current_path {
+                    function.instruction(&Instruction::Call(def.type_index));
+                } else {
+                    let (args, ret) = create_function_type(def.r#type);
+                    let index = module.types.len();
+                    module.types.ty().function(args, ret);
+                    module.imports.import(&module_path.join("::"), &name, EntityType::Function(index));
+                    function.instruction(&Instruction::Call(def.type_index));
+                }
+                // TODO: check if function can yield a value. If it does and we don't yield, pop it
+
+            }
         }
 
         Ok(())
@@ -466,5 +510,33 @@ fn convert_type(r#type: &desugared_tree::Type) -> (Type, Option<ValType>) {
             println!("TODO: handle {:?}", x);
             (Type::Unit, None)
         }
+    }
+}
+
+fn create_function_type(r#type: Type) -> (Vec<ValType>, Vec<ValType>) {
+    match r#type {
+        Type::Function { parameters, return_type } => {
+            let parameters = parameters.into_iter()
+                .map(translate_type)
+                .collect();
+            let return_type = match *return_type {
+                Type::Unit => return (parameters, vec![]),
+                x => translate_type(x),
+            };
+            (parameters, vec![return_type])
+        }
+        _ => panic!("Passed in a non-function type"),
+    }
+}
+
+fn translate_type(r#type: Type) -> ValType {
+    match r#type {
+        Type::Bool | Type::U8 | Type::I8 | Type::U16 | Type::I16 | Type::U32 | Type::I32 => ValType::I32,
+        Type::U64 | Type::I64 => ValType::I64,
+        Type::F32 => ValType::F32,
+        Type::F64 => ValType::F64,
+        Type::Unit => ValType::I32,
+        Type::Function { .. } => ValType::I64,
+
     }
 }

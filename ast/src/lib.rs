@@ -79,6 +79,10 @@ impl OwnedPath {
     pub fn last(&self) -> Option<&OwnedPathSegment> {
         self.segments.last()
     }
+
+    pub fn to_vec_strings(&self) -> Vec<String> {
+        self.segments.iter().map(|s| s.segment.to_string()).collect()
+    }
 }
 
 impl From<Vec<String>> for OwnedPath {
