@@ -28,6 +28,12 @@ pub struct FunctionArguments<'input> {
     pub span: Span,
 }
 
+impl<'input> FunctionArguments<'input> {
+    pub fn iter(&self) -> impl Iterator<Item = &FunctionArgument<'input>> {
+        self.arguments.iter()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
     pub lazy: bool,

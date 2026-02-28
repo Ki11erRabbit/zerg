@@ -75,6 +75,10 @@ impl OwnedPath {
     pub fn new(segments: Vec<OwnedPathSegment>, span: Span) -> OwnedPath {
         OwnedPath { segments, span }
     }
+    
+    pub fn last(&self) -> Option<&OwnedPathSegment> {
+        self.segments.last()
+    }
 }
 
 impl From<Vec<String>> for OwnedPath {

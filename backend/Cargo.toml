@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ast = { workspace = true }
+cranelift-codegen = "0.129.1"
+cranelift-frontend = "0.129.1"
+cranelift-wasm = "0.112.3"
+cranelift-native = "0.129.1"
+target-lexicon = "0.13.5"
