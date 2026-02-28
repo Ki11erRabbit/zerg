@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use wasm_encoder::{CodeSection, ExportKind, ExportSection, FunctionSection, Module, TypeSection, ValType};
+use wasm_encoder::{CodeSection, ExportKind, ExportSection, Function, FunctionSection, Module, TypeSection, ValType};
 use ast::desugared_tree;
 use crate::compiler::function_state::{FunctionState, VariableHandle, VariableLocation};
 
@@ -167,6 +167,7 @@ impl<'input> Compiler<'input> {
         if !errors.is_empty() {
             return Err(CompileError::Many(errors));
         }
+
         Ok(())
     }
 
@@ -197,11 +198,12 @@ impl<'input> Compiler<'input> {
             self.state.store_function_argument(&arg.name, ty, i as u32);
         }
         self.bind_block(&body);
-
-
-
+        let locals = self.state.local_definitions();
+        let mut function = Function::new(locals);
 
         self.state.clear();
+
+        module.code.function(&function);
 
         Ok(())
     }
@@ -219,11 +221,50 @@ impl<'input> Compiler<'input> {
                     let ty = convert_type(&r#type).0;
                     self.state.store(&name, ty);
 
+                    self.bind_expr(expr);
                 }
+                desugared_tree::Statement::Expression { expr, ..} => {
+                    self.bind_expr(expr);
+                }
+                desugared_tree::Statement::Assignment { expr, .. } => {
+                    self.bind_expr(expr);
+                }
+                _ => {}
+            }
+        }
+        self.state.pop();
+    }
+
+    fn bind_expr(&mut self, expr: &desugared_tree::Expression) {
+        match expr {
+            desugared_tree::Expression::IfExpression(if_expr) => {
+                self.bind_if_expr(if_expr);
+            }
+            desugared_tree::Expression::Parenthesized { expr, .. } => {
+                self.bind_expr(expr);
             }
             _ => {}
         }
-        self.state.pop();
+    }
+
+    fn bind_if_expr(&mut self, if_expr: &desugared_tree::IfExpression) {
+        let desugared_tree::IfExpression {
+            condition,
+            then_block,
+            elifs,
+            else_block,
+            ..
+        } = if_expr;
+
+        self.bind_expr(condition.as_ref());
+        self.bind_block(then_block);
+        for (condition, block) in elifs {
+            self.bind_expr(condition);
+            self.bind_block(block);
+        }
+        else_block.as_ref().map(|else_block| {
+            self.bind_block(else_block);
+        });
     }
 }
 
