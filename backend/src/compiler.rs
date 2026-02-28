@@ -304,11 +304,11 @@ impl<'input> Compiler<'input> {
             if path_buf.as_path().exists() {
                 std::fs::remove_dir_all(path_buf.as_path()).unwrap();
             }
+            module.module.section(&module.types);
             module.module.section(&module.imports);
+            module.module.section(&module.functions);
             module.module.section(&module.exports);
             module.module.section(&module.code);
-            module.module.section(&module.functions);
-            module.module.section(&module.types);
 
             std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
         }
