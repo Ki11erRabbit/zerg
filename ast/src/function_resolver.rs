@@ -29,6 +29,29 @@ impl std::fmt::Display for ResolverError {
         }
     }
 }
+// tests for variable handle transformation
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variable_handle_in_comptime_lookup() {
+        let mut resolver = FunctionResolver::new();
+
+        // non-comptime variable should be wrapped when accessed inside comptime
+        resolver.add_variable("x".to_string(), TypeInfo::U32, false);
+        assert_eq!(resolver.lookup_variable("x", false), Some(TypeInfo::U32));
+        assert_eq!(
+            resolver.lookup_variable("x", true),
+            Some(TypeInfo::Generic { name: "VariableHandle".to_string(), args: vec![TypeInfo::U32] }),
+        );
+
+        // a variable declared in a comptime context should not get wrapped
+        resolver.push_scope();
+        resolver.add_variable("y".to_string(), TypeInfo::I64, true);
+        assert_eq!(resolver.lookup_variable("y", true), Some(TypeInfo::I64));
+    }
+}
 
 impl std::error::Error for ResolverError {}
 
@@ -119,7 +142,8 @@ pub struct FunctionResolver {
     /// Maps function paths to their signatures (argument types and return type)
     function_signatures: HashMap<Vec<String>, FunctionSignature>,
     /// Stack of variable scopes - each scope maps variable names to their types
-    variable_scopes: Vec<HashMap<String, TypeInfo>>,
+    /// Each entry maps a variable name to a tuple of (type, was_declared_in_comptime)
+    variable_scopes: Vec<HashMap<String, (TypeInfo, bool)>>,
 }
 
 impl FunctionResolver {
@@ -180,7 +204,8 @@ impl FunctionResolver {
             current_comptime_paths: HashSet::new(),
             current_module: Vec::new(),
             function_signatures: HashMap::new(),
-            variable_scopes: vec![HashMap::new()], // Start with one global scope
+            // global scope with no comptime declarations
+            variable_scopes: vec![HashMap::new()],
         }
     }
 
@@ -215,18 +240,35 @@ impl FunctionResolver {
         }
     }
 
-    /// Add a variable to the current scope
-    fn add_variable(&mut self, name: String, type_info: TypeInfo) {
+    /// Add a variable to the current scope.
+    ///
+    /// `is_comptime_decl` should be `true` when the variable is declared in a comptime
+    /// context (either a comptime function or inside a comptime block).  This flag is
+    /// used later during lookup so that a normal variable referenced inside a comptime
+    /// block can be converted to a `VariableHandle<T>` type; comptime declarations are
+    /// left alone.
+    fn add_variable(&mut self, name: String, type_info: TypeInfo, is_comptime_decl: bool) {
         if let Some(current_scope) = self.variable_scopes.last_mut() {
-            current_scope.insert(name, type_info);
+            current_scope.insert(name, (type_info, is_comptime_decl));
         }
     }
 
-    /// Look up a variable in the current scope chain (searching from innermost to outermost)
-    fn lookup_variable(&self, name: &str) -> Option<TypeInfo> {
+    /// Look up a variable in the current scope chain (searching from innermost to
+    /// outermost).  If `in_comptime` is true and the variable was *not* declared in a
+    /// comptime context, the returned type will be wrapped in a
+    /// `VariableHandle<...>` generic; this models crossing the comptime boundary.
+    fn lookup_variable(&self, name: &str, in_comptime: bool) -> Option<TypeInfo> {
         for scope in self.variable_scopes.iter().rev() {
-            if let Some(type_info) = scope.get(name) {
-                return Some(type_info.clone());
+            if let Some((type_info, is_comptime_decl)) = scope.get(name) {
+                if in_comptime && !*is_comptime_decl {
+                    // non-comptime variable accessed from a comptime context -> handle
+                    return Some(TypeInfo::Generic {
+                        name: "VariableHandle".to_string(),
+                        args: vec![type_info.clone()],
+                    });
+                } else {
+                    return Some(type_info.clone());
+                }
             }
         }
         None
@@ -949,7 +991,7 @@ impl FunctionResolver {
 
                 // Track the variable's type in the current scope
                 if let Some(type_info) = Self::desugared_type_to_typeinfo(&r#type) {
-                    self.add_variable(name.to_string(), type_info);
+                    self.add_variable(name.to_string(), type_info, in_comptime);
                 }
 
                 desugared_tree::Statement::Let { name, r#type, expr, span }
@@ -987,7 +1029,7 @@ impl FunctionResolver {
             }
             parse_tree::Expression::Variable { name, span } => {
                 // Use the tracked type from the Let statement if available, using scope lookup
-                let r#type = self.lookup_variable(&name)
+                let r#type = self.lookup_variable(&name, in_comptime)
                     .map(|ti| Self::typeinfo_to_desugared_type(&ti, span))
                     .unwrap_or_else(|| desugared_tree::Type::Unit(span));
                 desugared_tree::Expression::Variable { name, r#type, span }
