@@ -19,6 +19,9 @@ struct Args {
     /// Path to main.zerg file
     #[arg()]
     main_file: PathBuf,
+    /// Optional directory containing the standard library sources
+    #[arg(short = 's', long = "stdlib")]
+    stdlib: Option<PathBuf>,
 }
 
 fn main() {
@@ -29,7 +32,8 @@ fn main() {
     // Store file contents to keep lifetimes
     let mut file_contents: Vec<(PathBuf, String)> = Vec::new();
     let mut errors: Vec<CollectError> = Vec::new();
-    if let Err(e) = collect_files_by_ref(&main_path, main_dir, &mut file_contents, &mut errors) {
+    let stdlib_dir = args.stdlib.as_deref();
+    if let Err(e) = collect_files_by_ref(&main_path, main_dir, stdlib_dir, &mut file_contents, &mut errors) {
         eprintln!("Error collecting files: {e:?}");
     }
 
@@ -81,6 +85,7 @@ fn main() {
 fn collect_files_by_ref(
     main_file: &Path,
     main_dir: &Path,
+    stdlib_dir: Option<&Path>,
     file_contents: &mut Vec<(PathBuf, String)>,
     errors: &mut Vec<CollectError>,
 ) -> Result<(), ()> {
@@ -101,34 +106,49 @@ fn collect_files_by_ref(
             }
         };
         file_contents.push((file_path.clone(), content.clone()));
-        // Parse file for imports
-        match parse(&content) {
-            Ok(ast) => {
-                for stmt in &ast.top_level_statements {
-                    let import_path_opt = match stmt {
-                        TopLevelStatement::Import(import_path) => Some(import_path),
-                        TopLevelStatement::ComptimeImport(import_path) => Some(import_path),
-                        _ => None,
-                    };
-                    if let Some(import_path) = import_path_opt {
-                        let import_vec = import_path.to_vec_strings();
-                        let mut dir = base_dir.clone();
-                        for (i, seg) in import_vec.iter().enumerate() {
-                            if i != import_vec.len() - 1 {
-                                dir.push(seg);
-                            } else {
-                                dir.push(format!("{seg}.zerg", ));
-                            }
-                        }
-                        if dir.exists() {
-                            let path = dir.clone();
+        // parse file for imports and add only the necessary ones
+        if let Ok(ast) = parse(&content) {
+            for stmt in &ast.top_level_statements {
+                let import_path_opt = match stmt {
+                    TopLevelStatement::Import(import_path) => Some(import_path),
+                    TopLevelStatement::ComptimeImport(import_path) => Some(import_path),
+                    _ => None,
+                };
+                if let Some(import_path) = import_path_opt {
+                    let import_vec = import_path.to_vec_strings();
+
+                    // helper to push a resolved path onto the stack
+                    let mut push_candidate = |candidate: PathBuf| {
+                        if candidate.exists() {
+                            let mut dir = candidate.clone();
                             dir.pop();
-                            stack.push((path, dir))
+                            stack.push((candidate, dir));
                         }
+                    };
+
+                    // try project-relative resolution first
+                    let mut project_candidate = base_dir.to_path_buf();
+                    for seg in &import_vec[..import_vec.len().saturating_sub(1)] {
+                        project_candidate.push(seg);
+                    }
+                    if let Some(last) = import_vec.last() {
+                        project_candidate.push(format!("{}.zerg", last));
+                    }
+                    if project_candidate.exists() {
+                        push_candidate(project_candidate);
+                    } else if let Some(stdlib_base) = stdlib_dir {
+                        // if not found in project, try standard library directory
+                        let mut std_candidate = stdlib_base.to_path_buf();
+                        for seg in &import_vec[..import_vec.len().saturating_sub(1)] {
+                            std_candidate.push(seg);
+                        }
+                        if let Some(last) = import_vec.last() {
+                            std_candidate.push(format!("{}.zerg", last));
+                        }
+                        push_candidate(std_candidate);
                     }
                 }
             }
-            Err(_) => {}
         }
     }
     Ok(())

@@ -21,6 +21,7 @@ fn desugar_top_level_statement(top_level_statement: TopLevelStatement) -> TopLev
         TopLevelStatement::Function(function) =>  {
             TopLevelStatement::Function(desugar_function(function))
         }
+        TopLevelStatement::Extern(r#extern) => TopLevelStatement::Extern(r#extern),
     }
 }
 

@@ -23,6 +23,7 @@ extern {
         "inline" => lexer::Token::Inline,
         "lazy" => lexer::Token::Lazy,
         "comptime" => lexer::Token::Comptime,
+        "extern" => lexer::Token::Extern,
         "->" => lexer::Token::Arrow,
         "(" => lexer::Token::OpenParen,
         ")" => lexer::Token::CloseParen,
@@ -67,6 +68,7 @@ ToplevelStatement: TopLevelStatement<'input> = {
     <import:Import> => TopLevelStatement::Import(import),
     <import:ComptimeImport> => TopLevelStatement::ComptimeImport(import),
     <function:Function> => TopLevelStatement::Function(function),
+    <external:Extern> => TopLevelStatement::Extern(external),
 };
 
 PathSegment: PathSegment<'input> = {
@@ -92,6 +94,23 @@ Import: Path<'input> = {
 
 ComptimeImport: Path<'input> = {
     "comptime" <import: Import> => import,
+};
+
+Extern: Extern<'input> = {
+    <start: @L> "extern" <library:String> "{" "}" <end: @R> => {
+        Extern::new(library, Vec::new(), Span::new(start, end))
+    },
+    <start: @L> "extern" <library:String> "{" <functions: ExternFunction+> "}" <end: @R> => {
+        Extern::new(library, functions, Span::new(start, end))
+    },
+};
+
+ExternFunction: Function<'input> = {
+    <start: @L> <vis:("pub")?> "fun" <kind:FunctionKind> <args:FunctionArguments> <ret_type:(":" <Type>)?> <block_start: @L> ";" <end: @R> => {
+        let public = vis.is_some();
+        let ret_type = ret_type.unwrap_or(Type::Unit(Span::new(0,0)));
+        Function::new_function(public, kind, Vec::new(), args, ret_type, Block::new(Vec::new(), Span::new(block_start, end)), Span::new(start, end))
+    },
 };
 
 Function: Function<'input> = {

@@ -36,6 +36,7 @@ pub enum Token<'input> {
     Inline,
     Lazy,
     Comptime,
+    Extern,
     // Symbols
     Arrow,
     OpenParen,
@@ -283,6 +284,7 @@ impl<'input> Lexer<'input> {
                          "inline" => Some(Ok((start, Token::Inline,  end))),
                          "lazy" => Some(Ok((start, Token::Lazy,  end))),
                          "comptime" => Some(Ok((start, Token::Comptime,  end))),
+                         "extern" => Some(Ok((start, Token::Extern,  end))),
                          x => Some(Ok((start, Token::Identifier(Cow::Borrowed(x)),  end))),
                      };
                 }

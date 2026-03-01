@@ -22,6 +22,17 @@ impl<'input> File<'input> {
                 _ => unreachable!()
             })
     }
+    
+    pub fn extern_iter(&self) -> impl Iterator<Item = &Extern<'input>> {
+        self.top_level_statements.iter()
+            .filter(|top_level_statement| {
+                matches!(top_level_statement, TopLevelStatement::Extern(_))
+            })
+            .map(|top_level_statement| match top_level_statement {
+                TopLevelStatement::Extern(r#extern) => r#extern,
+                _ => unreachable!()
+            })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +40,20 @@ pub enum TopLevelStatement<'input> {
     Import(Path<'input>),
     ComptimeImport(Path<'input>),
     Function(Function<'input>),
+    Extern(Extern<'input>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Extern<'input> {
+    pub library: Cow<'input, str>,
+    pub functions: Vec<Function<'input>>,
+    pub span: Span
+}
+
+impl<'input> Extern<'input> {
+    pub fn new(library: Cow<'input, str>, functions: Vec<Function<'input>>, span: Span) -> Self {
+        Extern { library, functions, span }
+    }
 }
 
 #[derive(Debug, Clone)]

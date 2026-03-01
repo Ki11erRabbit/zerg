@@ -1,10 +1,18 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
-use crate::{OwnedPath, Path, Span};
+use crate::{OwnedPath, Span};
 
 #[derive(Debug, Clone)]
 pub struct File<'input> {
     pub file_path: PathBuf,
+    pub functions: Vec<Function<'input>>,
+    pub externals: Vec<Extern<'input>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Extern<'input> {
+    pub library: Cow<'input, str>,
     pub functions: Vec<Function<'input>>,
     pub span: Span,
 }

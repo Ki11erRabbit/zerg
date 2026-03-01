@@ -71,6 +71,7 @@ pub struct FileDefinitions {
     exports: HashSet<Vec<String>>,
     /// The full file path including the name of the function
     internals: HashSet<Vec<String>>,
+    externals: HashSet<Vec<String>>,
 }
 
 impl FileDefinitions {
@@ -78,6 +79,7 @@ impl FileDefinitions {
         Self {
             exports: HashSet::new(),
             internals: HashSet::new(),
+            externals: HashSet::new(),
         }
     }
 
@@ -89,12 +91,20 @@ impl FileDefinitions {
         self.internals.insert(path);
     }
 
+    pub fn insert_external(&mut self, path: Vec<String>) {
+        self.externals.insert(path);
+    }
+
     pub fn lookup_export(&self, path: &[String]) -> bool {
         self.exports.contains(path)
     }
 
     pub fn lookup_internal(&self, path: &[String]) -> bool {
         self.internals.contains(path)
+    }
+
+    pub fn lookup_external(&self, path: &[String]) -> bool {
+        self.externals.contains(path)
     }
 }
 
@@ -634,6 +644,7 @@ impl FunctionResolver {
 
         let mut file_def = FileDefinitions::new();
 
+        // register normal functions
         for function in file.function_iter() {
             let arg_types: Vec<TypeInfo> = function.arguments.arguments.iter()
                 .map(|arg| Self::parse_tree_type_to_typeinfo(&arg.r#type))
@@ -691,6 +702,67 @@ impl FunctionResolver {
                 }
             }
         }
+        // also register functions declared inside extern blocks (they live in same namespace)
+        for r#extern in file.extern_iter() {
+            for function in &r#extern.functions {
+                let arg_types: Vec<TypeInfo> = function.arguments.arguments.iter()
+                    .map(|arg| Self::parse_tree_type_to_typeinfo(&arg.r#type))
+                    .collect();
+                let return_type = Self::parse_tree_type_to_typeinfo(&function.return_type);
+                match &function.kind {
+                    parse_tree::FunctionKind::Named { name, .. } => {
+                        let mut func_path = segments.clone();
+                        func_path.push(name.to_string());
+                        if function.public {
+                            file_def.insert_export(func_path.clone());
+                        } else {
+                            file_def.insert_internal(func_path.clone());
+                        }
+                        self.function_signatures.insert(func_path, FunctionSignature {
+                            argument_types: arg_types.clone(),
+                            return_type: return_type.clone(),
+                        });
+                    }
+                    parse_tree::FunctionKind::Operator { operator, .. } => {
+                        let name = match operator {
+                            parse_tree::Operator::Plus => "+",
+                            parse_tree::Operator::Minus => {
+                                if function.arguments.len() == 1 {
+                                    "-negate"
+                                } else {
+                                    "-minus"
+                                }
+                            }
+                            parse_tree::Operator::Multiply => "*",
+                            parse_tree::Operator::Divide => "/",
+                            parse_tree::Operator::Remainder => "%",
+                            parse_tree::Operator::Equals => "==",
+                            parse_tree::Operator::NotEquals => "!=",
+                            parse_tree::Operator::LessThan => "<",
+                            parse_tree::Operator::GreaterThan => ">",
+                            parse_tree::Operator::LessThanEquals => "<=",
+                            parse_tree::Operator::GreaterThanEquals => ">=",
+                            parse_tree::Operator::Or => "||",
+                            parse_tree::Operator::And => "&&",
+                            parse_tree::Operator::Not => "!",
+                        };
+                        let mut func_path = segments.clone();
+                        func_path.push(name.to_string());
+                        if function.public {
+                            file_def.insert_export(func_path.clone());
+                        } else {
+                            file_def.insert_internal(func_path.clone());
+                        }
+                        self.function_signatures.insert(func_path, FunctionSignature {
+                            argument_types: arg_types.clone(),
+                            return_type: return_type.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // extern declarations will be handled in the resolution stage below
 
         self.files.insert(segments, file_def);
     }
@@ -726,6 +798,7 @@ impl FunctionResolver {
             span,
         } = file;
         let mut functions = Vec::new();
+        let mut externs_raw = Vec::new();
         for statement in top_level_statements {
             match statement {
                 parse_tree::TopLevelStatement::Import(path) => {
@@ -739,6 +812,13 @@ impl FunctionResolver {
                 parse_tree::TopLevelStatement::Function(function) => {
                     functions.push(function);
                 }
+                parse_tree::TopLevelStatement::Extern(r#extern) => {
+                    externs_raw.push(r#extern.clone());
+                    // also resolve the contained functions normally so they appear in namespace
+                    for function in &r#extern.functions {
+                        functions.push(function.clone());
+                    }
+                }
             }
         }
 
@@ -748,9 +828,24 @@ impl FunctionResolver {
         }
         let functions = new_functions;
 
+        // convert extern blocks to desugared externs
+        let mut new_externs = Vec::with_capacity(externs_raw.len());
+        for r#extern in externs_raw {
+            let mut desugared_funcs = Vec::with_capacity(r#extern.functions.len());
+            for function in r#extern.functions {
+                desugared_funcs.push(self.resolve_function(&path, function)?);
+            }
+            new_externs.push(desugared_tree::Extern {
+                library: r#extern.library.clone(),
+                functions: desugared_funcs,
+                span: r#extern.span,
+            });
+        }
+
         Ok(desugared_tree::File {
             file_path: path,
             functions,
+            externals: new_externs,
             span
         })
     }
