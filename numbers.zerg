@@ -1,0 +1,5 @@
+import std::i32;
+
+pub fun main() {
+    let x: i32 = 3 + 3;
+}

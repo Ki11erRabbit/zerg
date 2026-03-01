@@ -29,29 +29,6 @@ impl std::fmt::Display for ResolverError {
         }
     }
 }
-// tests for variable handle transformation
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn variable_handle_in_comptime_lookup() {
-        let mut resolver = FunctionResolver::new();
-
-        // non-comptime variable should be wrapped when accessed inside comptime
-        resolver.add_variable("x".to_string(), TypeInfo::U32, false);
-        assert_eq!(resolver.lookup_variable("x", false), Some(TypeInfo::U32));
-        assert_eq!(
-            resolver.lookup_variable("x", true),
-            Some(TypeInfo::Generic { name: "VariableHandle".to_string(), args: vec![TypeInfo::U32] }),
-        );
-
-        // a variable declared in a comptime context should not get wrapped
-        resolver.push_scope();
-        resolver.add_variable("y".to_string(), TypeInfo::I64, true);
-        assert_eq!(resolver.lookup_variable("y", true), Some(TypeInfo::I64));
-    }
-}
 
 impl std::error::Error for ResolverError {}
 
@@ -147,63 +124,99 @@ pub struct FunctionResolver {
 }
 
 impl FunctionResolver {
-        /// Match argument types to function parameters, collecting generic substitutions
-        fn match_generics(
-            param_types: &[TypeInfo],
-            arg_types: &[TypeInfo],
-        ) -> Option<HashMap<String, TypeInfo>> {
-            let mut generics = HashMap::new();
-            if param_types.len() != arg_types.len() {
-                return None;
-            }
-            for (param, arg) in param_types.iter().zip(arg_types.iter()) {
-                match param {
-                    TypeInfo::Custom { name } => {
-                        generics.insert(name.clone(), arg.clone());
-                    }
-                    // For nested generics, could recurse here
-                    _ => {
-                        if param != arg {
-                            return None;
-                        }
-                    }
-                }
-            }
-            Some(generics)
+    /// Match argument types to function parameters, collecting generic substitutions
+    fn match_generics(
+        param_types: &[TypeInfo],
+        arg_types: &[TypeInfo],
+    ) -> Option<HashMap<String, TypeInfo>> {
+        let mut generics = HashMap::new();
+        if param_types.len() != arg_types.len() {
+            return None;
         }
-
-        /// Substitute generics in a type using the collected substitutions
-        fn substitute_generics(ty: &TypeInfo, generics: &HashMap<String, TypeInfo>) -> TypeInfo {
-            match ty {
+        for (param, arg) in param_types.iter().zip(arg_types.iter()) {
+            match param {
                 TypeInfo::Custom { name } => {
-                    if let Some(subst) = generics.get(name) {
-                        subst.clone()
-                    } else {
-                        TypeInfo::Custom { name: name.clone() }
+                    generics.insert(name.clone(), arg.clone());
+                }
+                // For nested generics, could recurse here
+                _ => {
+                    if param != arg {
+                        return None;
                     }
                 }
-                TypeInfo::Generic { name, args } => {
-                    TypeInfo::Generic {
-                        name: name.clone(),
-                        args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
-                    }
-                }
-                TypeInfo::Function { args, return_type } => {
-                    TypeInfo::Function {
-                        args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
-                        return_type: Box::new(Self::substitute_generics(return_type, generics)),
-                    }
-                }
-                _ => ty.clone(),
             }
         }
+        Some(generics)
+    }
+
+    /// Substitute generics in a type using the collected substitutions
+    fn substitute_generics(ty: &TypeInfo, generics: &HashMap<String, TypeInfo>) -> TypeInfo {
+        match ty {
+            TypeInfo::Custom { name } => {
+                if let Some(subst) = generics.get(name) {
+                    subst.clone()
+                } else {
+                    TypeInfo::Custom { name: name.clone() }
+                }
+            }
+            TypeInfo::Generic { name, args } => {
+                TypeInfo::Generic {
+                    name: name.clone(),
+                    args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
+                }
+            }
+            TypeInfo::Function { args, return_type } => {
+                TypeInfo::Function {
+                    args: args.iter().map(|a| Self::substitute_generics(a, generics)).collect(),
+                    return_type: Box::new(Self::substitute_generics(return_type, generics)),
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    fn default_files_and_signatures() -> (HashMap<Vec<String>, FileDefinitions>, HashMap<Vec<String>, FunctionSignature>) {
+        let mut files = HashMap::new();
+        let mut function_signatures = HashMap::new();
+
+        let mut compiler_file = FileDefinitions::new();
+        compiler_file.externals.insert(vec![String::from("compiler"), String::from("put_instruction")]);
+        compiler_file.externals.insert(vec![String::from("compiler"), String::from("use_variable")]);
+        compiler_file.externals.insert(vec![String::from("compiler"), String::from("set_variable")]);
+        files.insert(vec![String::from("compiler")], compiler_file);
+
+        let put_instruction = FunctionSignature {
+            argument_types: vec![TypeInfo::String],
+            return_type: TypeInfo::Unit,
+        };
+        function_signatures.insert(vec![String::from("compiler"), String::from("put_instruction")], put_instruction);
+
+        let use_variable = FunctionSignature {
+            argument_types: vec![TypeInfo::Generic { name: String::from("VariableHandle"), args: vec![TypeInfo::Custom { name: String::from("T")} ]}],
+            return_type: TypeInfo::Unit,
+        };
+        function_signatures.insert(vec![String::from("compiler"), String::from("use_variable")], use_variable);
+        let set_variable = FunctionSignature {
+            argument_types: vec![
+                TypeInfo::Generic { name: String::from("VariableHandle"), args: vec![TypeInfo::Custom { name: String::from("T")} ]},
+                TypeInfo::Custom { name: String::from("T") },
+            ],
+            return_type: TypeInfo::Unit,
+        };
+        function_signatures.insert(vec![String::from("compiler"), String::from("set_variable")], set_variable);
+
+        (files, function_signatures)
+    }
+
     pub fn new() -> Self {
+        let (files, function_signatures) = Self::default_files_and_signatures();
+
         Self {
-            files: HashMap::new(),
+            files,
             current_paths: HashSet::new(),
             current_comptime_paths: HashSet::new(),
             current_module: Vec::new(),
-            function_signatures: HashMap::new(),
+            function_signatures,
             // global scope with no comptime declarations
             variable_scopes: vec![HashMap::new()],
         }
@@ -1614,5 +1627,29 @@ impl FunctionResolver {
                 desugared_tree::Type::Function { args, r#return, span }
             }
         }
+    }
+}
+
+// tests for variable handle transformation
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variable_handle_in_comptime_lookup() {
+        let mut resolver = FunctionResolver::new();
+
+        // non-comptime variable should be wrapped when accessed inside comptime
+        resolver.add_variable("x".to_string(), TypeInfo::U32, false);
+        assert_eq!(resolver.lookup_variable("x", false), Some(TypeInfo::U32));
+        assert_eq!(
+            resolver.lookup_variable("x", true),
+            Some(TypeInfo::Generic { name: "VariableHandle".to_string(), args: vec![TypeInfo::U32] }),
+        );
+
+        // a variable declared in a comptime context should not get wrapped
+        resolver.push_scope();
+        resolver.add_variable("y".to_string(), TypeInfo::I64, true);
+        assert_eq!(resolver.lookup_variable("y", true), Some(TypeInfo::I64));
     }
 }

@@ -1,0 +1,10 @@
+comptime import compiler;
+
+
+pub fun (+)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.add");
+    }
+}

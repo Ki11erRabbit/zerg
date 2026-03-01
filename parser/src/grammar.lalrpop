@@ -89,7 +89,7 @@ Path: Path<'input> = {
 };
 
 Import: Path<'input> = {
-    "import" <path:Path> => path,
+    "import" <path:Path> ";" => path,
 };
 
 ComptimeImport: Path<'input> = {
