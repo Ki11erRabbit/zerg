@@ -1,17 +1,25 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use wasm_encoder::{BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, ImportSection, Instruction, Module, TypeSection, ValType};
-use ast::{desugared_tree, Path};
+use ast::{desugared_tree};
 use crate::compiler::function_state::{FunctionState, VariableLocation};
+use crate::interpreter::{Interpreter, InterpreterError};
 
-mod function_state;
+pub mod function_state;
 
 #[derive(Debug)]
 pub enum CompileError {
     Many(Vec<CompileError>),
+    Interpreter(InterpreterError),
 }
 
-#[derive(Clone, PartialEq)]
+impl From<InterpreterError> for CompileError {
+    fn from(e: InterpreterError) -> Self {
+        CompileError::Interpreter(e)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Type {
     Bool,
     U8,
@@ -31,7 +39,38 @@ pub enum Type {
     }
 }
 
-struct Definition {
+impl Type {
+    pub fn name(&self) -> String {
+        match self {
+            Type::Bool => "bool".into(),
+            Type::U8 => "u8".into(),
+            Type::I8 => "i8".into(),
+            Type::U16 => "u16".into(),
+            Type::I16 => "i16".into(),
+            Type::U32 => "u32".into(),
+            Type::I32 => "i32".into(),
+            Type::U64 => "u64".into(),
+            Type::I64 => "i64".into(),
+            Type::F32 => "f32".into(),
+            Type::F64 => "f64".into(),
+            Type::Unit => "unit".into(),
+            Type::Function { parameters, return_type } => {
+                let mut out = String::from("(");
+                for (i, param) in parameters.iter().enumerate() {
+                    out.push_str(&param.name());
+                    if i < parameters.len() - 1 {
+                        out.push_str(", ");
+                    }
+                }
+                out.push_str(") -> ");
+                out.push_str(&return_type.name());
+                out
+            }
+        }
+    }
+}
+
+pub struct Definition {
     type_index: u32,
     r#type: Type,
 }
@@ -42,30 +81,27 @@ impl Definition {
     }
 }
 
-struct ModuleDef<'input> {
+pub struct ComptimeDefinition<'input> {
+    pub function: desugared_tree::Function<'input>,
+}
+
+impl<'input> ComptimeDefinition<'input> {
+    pub fn new(function: desugared_tree::Function<'input>) -> Self {
+        ComptimeDefinition { function }
+    }
+}
+
+pub struct ModuleDef<'input> {
     name: Vec<String>,
     definitions: HashMap<String, Definition>,
+    comptime_definitions: HashMap<String, ComptimeDefinition<'input>>,
     imports: HashMap<Vec<String>, u32>,
     file: Option<desugared_tree::File<'input>>,
 }
 
 impl<'input> ModuleDef<'input> {
     fn new(file: desugared_tree::File<'input>) -> (Self, WasmModuleGroup) {
-        let module = Module::new();
-        let types = TypeSection::new();
-        let functions = FunctionSection::new();
-        let exports = ExportSection::new();
-        let imports = ImportSection::new();
-        let code = CodeSection::new();
-        let mut wasm_module = WasmModuleGroup {
-            module,
-            types,
-            functions,
-            exports,
-            imports,
-            code,
-            next_function_index: 0,
-        };
+        let mut wasm_module = WasmModuleGroup::new();
 
         let name = file.file_path.iter()
             .map(|s| s.to_string_lossy().to_string())
@@ -79,6 +115,7 @@ impl<'input> ModuleDef<'input> {
         let mut out = Self {
             name,
             definitions: HashMap::new(),
+            comptime_definitions: HashMap::new(),
             imports: HashMap::new(),
             file: None,
         };
@@ -98,6 +135,10 @@ impl<'input> ModuleDef<'input> {
         self.definitions.get(name)
     }
 
+    pub fn get_comptime_definition(&self, name: &str) -> Option<&ComptimeDefinition> {
+        self.comptime_definitions.get(name)
+    }
+
     fn import_function(&mut self, module: &mut WasmModuleGroup, path: Vec<String>, args: Vec<ValType>, ret: Vec<ValType>) -> u32 {
         let type_index = module.types.len();
         module.types.ty().function(args, ret);
@@ -112,7 +153,7 @@ impl<'input> ModuleDef<'input> {
         out
     }
 
-    fn add_function(&mut self, index: u32, function: &desugared_tree::Function, module: &mut WasmModuleGroup) {
+    fn add_function(&mut self, index: u32, function: &desugared_tree::Function<'input>, module: &mut WasmModuleGroup) {
         let desugared_tree::Function {
             public,
             comptime,
@@ -121,7 +162,9 @@ impl<'input> ModuleDef<'input> {
             path,
             ..
         } = function;
+        let name = path.last().as_ref().unwrap().segment.clone();
         if *comptime {
+            self.comptime_definitions.insert(name, ComptimeDefinition::new(function.clone()));
             return
         }
         let mut parameters = Vec::new();
@@ -141,7 +184,6 @@ impl<'input> ModuleDef<'input> {
         };
         module.types.ty().function(parameters, return_type);
 
-        let name = path.last().as_ref().unwrap().segment.clone();
         module.functions.function(index);
         if *public {
             module.exports.export(&name, ExportKind::Func, index);
@@ -232,6 +274,26 @@ struct WasmModuleGroup {
     next_function_index: u32,
 }
 
+impl WasmModuleGroup {
+    pub fn new() -> Self {
+        let module = Module::new();
+        let types = TypeSection::new();
+        let functions = FunctionSection::new();
+        let exports = ExportSection::new();
+        let imports = ImportSection::new();
+        let code = CodeSection::new();
+        WasmModuleGroup {
+            module,
+            types,
+            functions,
+            exports,
+            imports,
+            code,
+            next_function_index: 0,
+        }
+    }
+}
+
 pub struct Compiler<'input> {
     module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
     state: FunctionState,
@@ -245,6 +307,23 @@ impl<'input> Compiler<'input> {
             state: FunctionState::new(),
             current_path: Vec::new(),
         }
+    }
+
+    pub fn get_module_def(&self, path: &[String]) -> Option<&ModuleDef<'input>> {
+        self.module_to_def.get(path)
+    }
+
+    /// The location will be offset to the right spot in the variable ordering
+    pub fn get_variables(&self) -> Vec<(String, VariableLocation)> {
+        let mut out = Vec::new();
+        for scope in self.state.iter() {
+            for (name, location) in scope.iter() {
+                let mut location = location.clone();
+                location.update_index(self.state.function_arguments, self.state.i32_var_count, self.state.i64_var_count, self.state.f32_var_count);
+                out.push((name.clone(), location));
+            }
+        }
+        out
     }
 
     fn load_files(&mut self, files: Vec<desugared_tree::File<'input>>) -> Vec<WasmModuleGroup> {
@@ -426,8 +505,9 @@ impl<'input> Compiler<'input> {
                     _ => todo!("other assignment target"),
                 }
             }
-            desugared_tree::Statement::Comptime { .. } => {
-                todo!("comptime statement")
+            desugared_tree::Statement::Comptime { block, .. } => {
+                let mut interpreter = Interpreter::new();
+                interpreter.interpret_comptime_block(self, function, block)?;
             }
         }
 

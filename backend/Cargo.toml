@@ -7,3 +7,4 @@ edition = "2024"
 ast = { workspace = true }
 wasm-encoder = "0.245.1"
 wasmparser = "0.245.1"
+state = "0.6.0"

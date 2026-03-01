@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use wasm_encoder::ValType;
 use crate::compiler::Type;
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum VariableLocation {
     I32 {
         index: u32,
@@ -16,6 +17,52 @@ pub enum VariableLocation {
     FunctionArg {
         index: u32,
         original_type: Type,
+    }
+}
+
+impl VariableLocation {
+    pub fn get_index(&self) -> u32 {
+        match self {
+            VariableLocation::I32 { index, .. } => *index,
+            VariableLocation::I64 { index, .. } => *index,
+            VariableLocation::F32(index) => *index,
+            VariableLocation::F64(index) => *index,
+            VariableLocation::FunctionArg { index, .. } => *index,
+        }
+    }
+    
+    pub fn get_type(&self) -> Type {
+        match self {
+            VariableLocation::I32 { original_type, .. } => original_type.clone(),
+            VariableLocation::I64 { original_type, .. } => original_type.clone(),
+            VariableLocation::F32(ty) => Type::F32,
+            VariableLocation::F64(ty) => Type::F64,
+            VariableLocation::FunctionArg { original_type, .. } => original_type.clone(),
+        }
+    }
+    
+    pub fn update_index(
+        &mut self, 
+        function_arguments: u32,
+        i32_var_count: u32,
+        i64_var_count: u32,
+        f32_var_count: u32,
+    ) {
+        match self {
+            VariableLocation::I32 { index, .. } => {
+                *index = function_arguments + *index;
+            }
+            VariableLocation::I64 { index, .. } => {
+                *index = function_arguments + i32_var_count + *index;
+            }
+            VariableLocation::F32(index) => {
+                *index = function_arguments + i32_var_count + i64_var_count + *index;
+            }
+            VariableLocation::F64(index) => {
+                *index = function_arguments + i32_var_count + i64_var_count + f32_var_count + *index;
+            }
+            VariableLocation::FunctionArg { .. } => {}
+        }
     }
 }
 
@@ -42,15 +89,19 @@ impl Scope {
     pub fn store(&mut self, variable_name: &str, location: VariableLocation) {
         self.map.insert(variable_name.to_string(), location);
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &VariableLocation)> {
+        self.map.iter()
+    }
 }
 
 pub struct FunctionState {
     stack: Vec<Scope>,
-    function_arguments: u32,
-    i32_var_count: u32,
-    i64_var_count: u32,
-    f32_var_count: u32,
-    f64_var_count: u32,
+    pub function_arguments: u32,
+    pub i32_var_count: u32,
+    pub i64_var_count: u32,
+    pub f32_var_count: u32,
+    pub f64_var_count: u32,
 }
 
 impl FunctionState {
@@ -176,5 +227,9 @@ impl FunctionState {
             (self.f32_var_count, ValType::F32),
             (self.f64_var_count, ValType::F64)
         ]
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Scope> {
+        self.stack.iter()
     }
 }

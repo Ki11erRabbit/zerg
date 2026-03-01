@@ -1,27 +1,49 @@
 mod interpreter_state;
 
-use wasm_encoder::Function;
+use std::collections::HashMap;
+use wasm_encoder::{Function, Instruction};
+use ast::{desugared_tree, Span};
 use ast::desugared_tree::{Block, Expression, IfExpression, Statement, Type};
-use crate::Compiler;
+use crate::{compiler, Compiler};
 use crate::interpreter::interpreter_state::{InterpreterState, Value};
 
 #[derive(Debug)]
 pub enum InterpreterError {
     Many(Vec<InterpreterError>),
+    MissMatchedTypes {
+        expected: String,
+        found: String,
+        span: Span,
+    }
 }
 
-pub struct Interpreter<'compiler, 'input> {
-    compiler: &'compiler mut Compiler<'input>,
+#[derive(Debug, Copy, Clone)]
+enum InternalFunction {
+    /// Function takes in the name of the instruction as a string.
+    PutInstruction,
+    /// Takes in a variable handle and emits the instruction to use a local variable.
+    UseVariable,
+    /// Takes in a variable handle and a value and emits the instruction to set a local variable.
+    SetVariable,
+}
+
+pub struct Interpreter {
     state: Vec<InterpreterState>,
     should_return: bool,
+    internal_functions: HashMap<Vec<String>, InternalFunction>
 }
 
-impl<'compiler, 'input> Interpreter<'compiler, 'input> {
-    pub fn new(compiler: &'compiler mut Compiler<'input>) -> Self {
+impl<'input> Interpreter {
+    pub fn new() -> Self {
+        let mut internal_functions = HashMap::new();
+        internal_functions.insert(vec![String::from("compiler"), String::from("put_instruction")], InternalFunction::PutInstruction);
+        internal_functions.insert(vec![String::from("compiler"), String::from("use_variable")], InternalFunction::UseVariable);
+        internal_functions.insert(vec![String::from("compiler"), String::from("set_variable")], InternalFunction::SetVariable);
+        
         Self {
-            compiler,
             state: Vec::new(),
             should_return: false,
+            internal_functions
         }
     }
 
@@ -51,18 +73,25 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
 
     pub fn interpret_comptime_block(
         &mut self,
+        compiler: &Compiler<'input>,
         function: &mut Function,
         block: Block<'input>,
     ) -> Result<(), InterpreterError> {
         let mut out = Value::Unit;
         self.push_state();
-        self.interpret_block(function, block, &mut out)?;
+        self.push();
+        for (name, location) in compiler.get_variables() {
+            self.store(&name, Value::VariableHandle(location));
+        }
+
+        self.interpret_block(compiler, function, block, &mut out)?;
         self.pop_state();
         Ok(())
     }
 
     fn interpret_block(
         &mut self,
+        compiler: &Compiler<'input>,
         function: &mut Function,
         block: Block<'input>,
         out: &mut Value,
@@ -74,7 +103,7 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
             if self.should_return {
                 return Ok(Value::Unit);
             }
-            let value = self.interpret_statement(function, stmt, out)?;
+            let value = self.interpret_statement(compiler, function, stmt, out)?;
             if i == statements_len - 1 {
                 out_value = value;
             }
@@ -85,17 +114,18 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
 
     fn interpret_statement(
         &mut self,
+        compiler: &Compiler<'input>,
         function: &mut Function,
         statement: Statement<'input>,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         match statement {
             Statement::Let { name, expr, .. } => {
-                let value = self.interpret_expr(function, expr, out)?;
+                let value = self.interpret_expr(compiler, function, expr, out)?;
                 self.store(&name, value);
             }
             Statement::Assignment { target, expr, .. } => {
-                let value = self.interpret_expr(function, expr, out)?;
+                let value = self.interpret_expr(compiler, function, expr, out)?;
                 match target {
                     Expression::Variable { name, .. } => {
                         self.store(&name, value);
@@ -104,11 +134,11 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
                 }
             }
             Statement::Expression { expr, .. } => {
-                let value = self.interpret_expr(function, expr, out)?;
+                let value = self.interpret_expr(compiler, function, expr, out)?;
                 return Ok(value);
             }
             Statement::Comptime { block, .. } => {
-                self.interpret_block(function, block, out)?;
+                self.interpret_block(compiler, function, block, out)?;
             }
         }
         Ok(Value::Unit)
@@ -116,6 +146,7 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
 
     fn interpret_expr(
         &mut self,
+        compiler: &Compiler<'input>,
         function: &mut Function,
         expr: Expression<'input>,
         out: &mut Value,
@@ -145,13 +176,13 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
                 return Ok(Value::String(value.to_string()));
             }
             Expression::Parenthesized { expr, .. } => {
-                let value = self.interpret_expr(function, *expr, out)?;
+                let value = self.interpret_expr(compiler, function, *expr, out)?;
                 return Ok(value);
             }
             Expression::Return { value, .. } => {
                 self.should_return = true;
                 if let Some(value) = value {
-                    let value = self.interpret_expr(function, *value, out)?;
+                    let value = self.interpret_expr(compiler, function, *value, out)?;
                     *out = value;
                 }
             }
@@ -164,25 +195,183 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
                     ..
                 } = if_expr;
 
-                let condition_value = self.interpret_expr(function, *condition, out)?;
+                let condition_value = self.interpret_expr(compiler, function, *condition, out)?;
                 if matches!(condition_value, Value::Bool(true)) {
-                    let out  = self.interpret_block(function, then_block, out)?;
+                    let out  = self.interpret_block(compiler, function, then_block, out)?;
                     return Ok(out)
                 }
                 for (condition, then_block) in elifs {
-                    let condition_value = self.interpret_expr(function, condition, out)?;
+                    let condition_value = self.interpret_expr(compiler, function, condition, out)?;
                     if matches!(condition_value, Value::Bool(true)) {
-                        let out  = self.interpret_block(function, then_block, out)?;
+                        let out  = self.interpret_block(compiler, function, then_block, out)?;
                         return Ok(out)
                     }
                 }
                 if let Some(else_block) = else_block {
-                    let out = self.interpret_block(function, then_block, out)?;
+                    let out = self.interpret_block(compiler, function, then_block, out)?;
                     return Ok(out)
                 }
             }
-            Expression::FunctionCall { name, args, .. } => {
+            Expression::FunctionCall { name, args, span, .. } => {
+                let args = args.into_iter()
+                    .map(|val| self.interpret_expr(compiler, function, val, out))
+                    .collect::<Result<Vec<_>, _>>()?;
 
+                let mut path = name.to_vec_strings();
+                if let Some(func) = self.internal_functions.get(&path) {
+                    let value = self.interpret_internal_function(compiler, function, args, *func, span)?;
+                    return Ok(value)
+                }
+                let name = path.pop().unwrap();
+                let def = compiler.get_module_def(&path).unwrap();
+                let comptime_function = def.get_comptime_definition(&name).unwrap();
+
+                let out = self.interpret_function(compiler, function, comptime_function.function.clone(), args)?;
+                return Ok(out)
+            }
+        }
+        Ok(Value::Unit)
+    }
+    
+    fn interpret_function(
+        &mut self,
+        compiler: &Compiler<'input>,
+        function: &mut Function,
+        comptime_function: desugared_tree::Function<'input>,
+        parameters: Vec<Value>
+    ) -> Result<Value, InterpreterError> {
+        let desugared_tree::Function {
+            arguments,
+            body,
+            ..
+        } = comptime_function;
+        
+        let mut out = Value::Unit;
+        self.push_state();
+
+        self.push();
+
+        for (argument, parameter) in arguments.iter().zip(parameters.into_iter()) {
+            self.store(&argument.name, parameter);
+        }
+        self.push();
+
+        match self.interpret_block(compiler, function, body, &mut out) {
+            Ok(value) => {
+                out = value;
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+        self.pop_state();
+
+        Ok(out)
+    }
+
+    fn interpret_internal_function(
+        &mut self,
+        compiler: &Compiler<'input>,
+        function: &mut Function,
+        parameters: Vec<Value>,
+        internal_function: InternalFunction,
+        span: Span
+    ) -> Result<Value, InterpreterError> {
+        match internal_function {
+            InternalFunction::PutInstruction => {
+                let value = match &parameters[0] {
+                    Value::String(value) => value.to_string(),
+                    x => {
+                        return Err(InterpreterError::MissMatchedTypes {
+                            expected: String::from("String"),
+                            found: x.type_name(),
+                            span,
+                        })
+                    }
+                };
+                match value.as_str() {
+                    _ => todo!("put instruction")
+                }
+            }
+            InternalFunction::UseVariable => {
+                let index = match &parameters[0] {
+                    Value::VariableHandle(location) => location.get_index(),
+                    x => {
+                        return Err(InterpreterError::MissMatchedTypes {
+                            expected: String::from("VariableHandle<T>"),
+                            found: x.type_name(),
+                            span,
+                        })
+                    }
+                };
+                function.instruction(&Instruction::LocalGet(index));
+            }
+            InternalFunction::SetVariable => {
+                let (index, r#type) = match &parameters[0] {
+                    Value::VariableHandle(location) => (location.get_index(), location.get_type()),
+                    x => {
+                        return Err(InterpreterError::MissMatchedTypes {
+                            expected: String::from("VariableHandle<T>"),
+                            found: x.type_name(),
+                            span,
+                        })
+                    }
+                };
+                match (r#type, &parameters[1]) {
+                    (compiler::Type::Bool, Value::Bool(val)) => {
+                        function.instruction(&Instruction::I32Const(*val as i32));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::U8, Value::U8(val)) => {
+                        function.instruction(&Instruction::I32Const(*val as i32));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::I8, Value::I8(val)) => {
+                        function.instruction(&Instruction::I32Const(*val as i32));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::U16, Value::U16(val)) => {
+                        function.instruction(&Instruction::I32Const(*val as i32));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::I16, Value::I16(val)) => {
+                        function.instruction(&Instruction::I32Const(*val as i32));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::U32, Value::U32(val)) => {
+                        let val = i32::from_ne_bytes(val.to_ne_bytes());
+                        function.instruction(&Instruction::I32Const(val));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::I32, Value::I32(val)) => {
+                        function.instruction(&Instruction::I32Const(*val));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::U64, Value::U64(val)) => {
+                        let val = i64::from_ne_bytes(val.to_ne_bytes());
+                        function.instruction(&Instruction::I64Const(val));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::I64, Value::I64(val)) => {
+                        function.instruction(&Instruction::I64Const(*val));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::F32, Value::F32(val)) => {
+                        function.instruction(&Instruction::F32Const((*val).into()));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (compiler::Type::F64, Value::F64(val)) => {
+                        function.instruction(&Instruction::F64Const((*val).into()));
+                        function.instruction(&Instruction::LocalSet(index));
+                    }
+                    (ty, value) => {
+                        return Err(InterpreterError::MissMatchedTypes {
+                            expected: ty.name(),
+                            found: value.type_name(),
+                            span,
+                        })
+                    }
+                }
             }
         }
         Ok(Value::Unit)
