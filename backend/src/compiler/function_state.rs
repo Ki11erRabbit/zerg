@@ -30,7 +30,7 @@ impl VariableLocation {
             VariableLocation::FunctionArg { index, .. } => *index,
         }
     }
-    
+
     pub fn get_type(&self) -> Type {
         match self {
             VariableLocation::I32 { original_type, .. } => original_type.clone(),
@@ -40,9 +40,9 @@ impl VariableLocation {
             VariableLocation::FunctionArg { original_type, .. } => original_type.clone(),
         }
     }
-    
+
     pub fn update_index(
-        &mut self, 
+        &mut self,
         function_arguments: u32,
         i32_var_count: u32,
         i64_var_count: u32,
@@ -97,6 +97,7 @@ impl Scope {
 
 pub struct FunctionState {
     stack: Vec<Scope>,
+    current_scope: usize,
     pub function_arguments: u32,
     pub i32_var_count: u32,
     pub i64_var_count: u32,
@@ -108,6 +109,7 @@ impl FunctionState {
     pub fn new() -> Self {
         Self {
             stack: vec![Scope::new()],
+            current_scope: 0,
             function_arguments: 0,
             i32_var_count: 0,
             i64_var_count: 0,
@@ -116,8 +118,12 @@ impl FunctionState {
         }
     }
 
+    pub fn current_scope(&self) -> usize {
+        self.current_scope
+    }
+
     pub fn get(&self, variable_name: &str) -> Option<u32> {
-        for scope in self.stack.iter().rev() {
+        for scope in self.stack.iter().take(self.current_scope + 1).rev() {
             if let Some(location) = scope.get(variable_name) {
                 let new_location = match location {
                     VariableLocation::I32 { index, .. } => {
@@ -148,7 +154,7 @@ impl FunctionState {
     }
 
     pub fn store(&mut self, variable_name: &str, ty: Type) {
-        for scope in self.stack.iter_mut().rev() {
+        for scope in self.stack.iter_mut().take(self.current_scope + 1).rev() {
             if let Some(location) = scope.get(variable_name) {
                 // Check to see if we have a compatible variable with same name.
                 match (location, &ty) {
@@ -203,16 +209,20 @@ impl FunctionState {
 
 
     pub fn push(&mut self) {
-        self.stack.push(Scope::new());
+        self.current_scope += 1;
+        if self.current_scope >= self.stack.len() {
+            self.stack.push(Scope::new());
+        }
     }
 
     pub fn pop(&mut self) {
-        self.stack.pop();
+        self.current_scope -= 1;
     }
 
     pub fn clear(&mut self) {
         self.stack.clear();
         self.stack.push(Scope::new());
+        self.current_scope = 0;
         self.i32_var_count = 0;
         self.i64_var_count = 0;
         self.f32_var_count = 0;

@@ -461,6 +461,7 @@ impl<'input> Compiler<'input> {
     ) -> Result<(), CompileError> {
         let mut errors: Vec<CompileError> = Vec::new();
         let statements_len = block.statements.len();
+        self.state.push();
         for (i, stmt) in block.statements.into_iter().enumerate() {
             let yield_value = if yield_value && i == statements_len - 1 {
                 true
@@ -473,6 +474,7 @@ impl<'input> Compiler<'input> {
                 Err(error) => errors.push(error),
             }
         }
+        self.state.pop();
         if !errors.is_empty() {
             return Err(CompileError::Many(errors));
         }

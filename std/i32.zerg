@@ -8,3 +8,83 @@ pub fun (+)(x: i32, y: i32): i32 {
         put_instruction("i32.add");
     }
 }
+
+pub fun (-)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.sub");
+    }
+}
+
+pub fun (*)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.mul");
+    }
+}
+
+pub fun (/)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.div_s");
+    }
+}
+
+pub fun (%)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.rem_s");
+    }
+}
+
+pub fun (==)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.eq");
+    }
+}
+
+pub fun (!=)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.ne");
+    }
+}
+
+pub fun (<)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.lt_s");
+    }
+}
+
+pub fun (<=)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.le_s");
+    }
+}
+
+pub fun (>)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.gt_s");
+    }
+}
+
+pub fun (>=)(x: i32, y: i32): i32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.ge_s");
+    }
+}

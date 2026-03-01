@@ -180,9 +180,10 @@ impl FunctionResolver {
         let mut function_signatures = HashMap::new();
 
         let mut compiler_file = FileDefinitions::new();
-        compiler_file.externals.insert(vec![String::from("compiler"), String::from("put_instruction")]);
-        compiler_file.externals.insert(vec![String::from("compiler"), String::from("use_variable")]);
-        compiler_file.externals.insert(vec![String::from("compiler"), String::from("set_variable")]);
+        
+        compiler_file.insert_export(vec![String::from("compiler"), String::from("put_instruction")]);
+        compiler_file.insert_export(vec![String::from("compiler"), String::from("use_variable")]);
+        compiler_file.insert_export(vec![String::from("compiler"), String::from("set_variable")]);
         files.insert(vec![String::from("compiler")], compiler_file);
 
         let put_instruction = FunctionSignature {
@@ -1651,5 +1652,19 @@ mod tests {
         resolver.push_scope();
         resolver.add_variable("y".to_string(), TypeInfo::I64, true);
         assert_eq!(resolver.lookup_variable("y", true), Some(TypeInfo::I64));
+    }
+
+    #[test]
+    fn comptime_imported_builtin_resolves() {
+        let mut resolver = FunctionResolver::new();
+        // simulate having performed a `comptime import compiler;`
+        resolver.add_current_comptime_path(vec!["compiler".to_string()]);
+
+        // resolver should know about the builtin signatures we seeded in new()
+        let path = resolver.resolve_comptime_item("use_variable");
+        assert_eq!(path, Some(vec!["compiler".to_string(), "use_variable".to_string()]));
+
+        let path2 = resolver.resolve_comptime_item("put_instruction");
+        assert_eq!(path2, Some(vec!["compiler".to_string(), "put_instruction".to_string()]));
     }
 }

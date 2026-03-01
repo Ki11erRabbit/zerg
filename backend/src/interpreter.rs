@@ -271,7 +271,7 @@ impl<'input> Interpreter {
 
     fn interpret_internal_function(
         &mut self,
-        compiler: &Compiler<'input>,
+        _compiler: &Compiler<'input>,
         function: &mut Function,
         parameters: Vec<Value>,
         internal_function: InternalFunction,
@@ -290,7 +290,40 @@ impl<'input> Interpreter {
                     }
                 };
                 match value.as_str() {
-                    _ => todo!("put instruction")
+                    "i32.add" => {
+                        function.instruction(&Instruction::I32Add);
+                    }
+                    "i32.sub" => {
+                        function.instruction(&Instruction::I32Sub);
+                    }
+                    "i32.mul" => {
+                        function.instruction(&Instruction::I32Mul);
+                    }
+                    "i32.div_s" => {
+                        function.instruction(&Instruction::I32DivS);
+                    }
+                    "i32.rem_s" => {
+                        function.instruction(&Instruction::I32RemS);
+                    }
+                    "i32.eq" => {
+                        function.instruction(&Instruction::I32Eq);
+                    }
+                    "i32.ne" => {
+                        function.instruction(&Instruction::I32Ne);
+                    }
+                    "i32.lt_s" => {
+                        function.instruction(&Instruction::I32LtS);
+                    }
+                    "i32.le_s" => {
+                        function.instruction(&Instruction::I32LeS);
+                    }
+                    "i32.gt_s" => {
+                        function.instruction(&Instruction::I32GtS);
+                    }
+                    "i32.ge_s" => {
+                        function.instruction(&Instruction::I32GeS);
+                    }
+                    value => todo!("put instruction: {}", value),
                 }
             }
             InternalFunction::UseVariable => {

@@ -299,11 +299,63 @@ DisjunctionExpr: Expression<'input> = {
 };
 
 ConjunctionExpr: Expression<'input> = {
-    <start: @L> <lhs: AddExpr> "&&" <rhs: ConjunctionExpr> <end: @R> => {
+    <start: @L> <lhs: ComparisionExpr> "&&" <rhs: ConjunctionExpr> <end: @R> => {
         Expression::BinOp {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             op: Operator::And,
+            span: Span::new(start, end),
+        }
+    },
+    <expr: ComparisionExpr> => expr,
+};
+
+ComparisionExpr: Expression<'input> = {
+    <start: @L> <lhs: ComparisionExpr> "==" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::Equals,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: ComparisionExpr> "!=" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::NotEquals,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: ComparisionExpr> "<" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::LessThan,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: ComparisionExpr> "<=" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::LessThanEquals,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: ComparisionExpr> ">" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::GreaterThan,
+            span: Span::new(start, end),
+        }
+    },
+    <start: @L> <lhs: ComparisionExpr> ">=" <rhs: AddExpr> <end: @R> => {
+        Expression::BinOp {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            op: Operator::GreaterThanEquals,
             span: Span::new(start, end),
         }
     },

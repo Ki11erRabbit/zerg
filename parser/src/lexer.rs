@@ -242,10 +242,9 @@ impl<'input> Lexer<'input> {
                 '0'..='9' => {
                     let mut end = start;
                     while let Some((next, chr)) = self.peek() {
-                        let next = *next;
+                        end = *next;
                         let chr = *chr;
                         if chr.is_digit(10) || chr == '.' {
-                            end = next;
                             self.next_token();
                         } else {
                             break;
