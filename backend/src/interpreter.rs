@@ -18,46 +18,56 @@ pub struct Interpreter<'compiler, 'input> {
 
 impl<'compiler, 'input> Interpreter<'compiler, 'input> {
     pub fn new(compiler: &'compiler mut Compiler<'input>) -> Self {
-        Self { 
+        Self {
             compiler,
             state: Vec::new(),
             should_return: false,
         }
     }
-    
+
     fn push(&mut self) {
         self.state.last_mut().map(|state| state.push());
     }
-    
+
     fn pop(&mut self) {
         self.state.last_mut().map(|state| state.pop());
     }
-    
+
     fn push_state(&mut self) {
         self.state.push(InterpreterState::new());
     }
-    
+
     fn pop_state(&mut self) {
         self.state.pop();
     }
-    
+
+    fn store(&mut self, name: &str, value: Value) {
+        self.state.last_mut().map(|state| state.store(name, value));
+    }
+
+    fn get(&self, name: &str) -> Option<&Value> {
+        self.state.last().map(|state| state.get(name)).flatten()
+    }
+
     pub fn interpret_comptime_block(
         &mut self,
         function: &mut Function,
         block: Block<'input>,
     ) -> Result<(), InterpreterError> {
         let mut out = Value::Unit;
+        self.push_state();
         self.interpret_block(function, block, &mut out)?;
+        self.pop_state();
         Ok(())
     }
-    
+
     fn interpret_block(
-        &mut self, 
-        function: &mut Function, 
+        &mut self,
+        function: &mut Function,
         block: Block<'input>,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
-        self.state.push();
+        self.push();
         let mut out_value = Value::Unit;
         let statements_len = block.statements.len();
         for (i, stmt) in block.statements.into_iter().enumerate() {
@@ -69,10 +79,10 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
                 out_value = value;
             }
         }
-        self.state.pop();
+        self.pop();
         Ok(out_value)
     }
-    
+
     fn interpret_statement(
         &mut self,
         function: &mut Function,
@@ -82,13 +92,13 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
         match statement {
             Statement::Let { name, expr, .. } => {
                 let value = self.interpret_expr(function, expr, out)?;
-                self.state.store(&name, value);
+                self.store(&name, value);
             }
             Statement::Assignment { target, expr, .. } => {
                 let value = self.interpret_expr(function, expr, out)?;
                 match target {
                     Expression::Variable { name, .. } => {
-                        self.state.store(&name, value);
+                        self.store(&name, value);
                     }
                     _ => todo!("Non variable assignment")
                 }
@@ -103,7 +113,7 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
         }
         Ok(Value::Unit)
     }
-    
+
     fn interpret_expr(
         &mut self,
         function: &mut Function,
@@ -112,7 +122,7 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
     ) -> Result<Value, InterpreterError> {
         match expr {
             Expression::Variable { name, .. } => {
-                let value = self.state.get(&name).unwrap();
+                let value = self.get(&name).unwrap();
                 return Ok(value.clone());
             }
             Expression::ConstantNumber { value, r#type, ..} => {
@@ -147,13 +157,13 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
             }
             Expression::IfExpression(if_expr) => {
                 let IfExpression {
-                    condition, 
-                    then_block, 
-                    elifs, 
+                    condition,
+                    then_block,
+                    elifs,
                     else_block,
                     ..
                 } = if_expr;
-                
+
                 let condition_value = self.interpret_expr(function, *condition, out)?;
                 if matches!(condition_value, Value::Bool(true)) {
                     let out  = self.interpret_block(function, then_block, out)?;
@@ -172,7 +182,7 @@ impl<'compiler, 'input> Interpreter<'compiler, 'input> {
                 }
             }
             Expression::FunctionCall { name, args, .. } => {
-                
+
             }
         }
         Ok(Value::Unit)
