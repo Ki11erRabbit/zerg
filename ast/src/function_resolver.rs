@@ -180,7 +180,7 @@ impl FunctionResolver {
         let mut function_signatures = HashMap::new();
 
         let mut compiler_file = FileDefinitions::new();
-        
+
         compiler_file.insert_export(vec![String::from("compiler"), String::from("put_instruction")]);
         compiler_file.insert_export(vec![String::from("compiler"), String::from("use_variable")]);
         compiler_file.insert_export(vec![String::from("compiler"), String::from("set_variable")]);
@@ -310,7 +310,7 @@ impl FunctionResolver {
             for arg_type in arg_types {
                 typed_path.push(format!("{:?}", arg_type).to_lowercase());
             }
-            
+
             if let Some(def) = self.files.get(&typed_path[..(typed_path.len() - arg_types.len() - 1)]) {
                 if def.lookup_export(&typed_path) {
                     return Some(typed_path);
@@ -327,19 +327,19 @@ impl FunctionResolver {
 
         let mut local_path = self.current_module.clone();
         local_path.push(name.to_string());
-        
+
         // Try typed version
         let mut typed_local_path = local_path.clone();
         for arg_type in arg_types {
             typed_local_path.push(format!("{:?}", arg_type).to_lowercase());
         }
-        
+
         if let Some(def) = self.files.get(&typed_local_path[..(typed_local_path.len() - arg_types.len() - 1)]) {
             if def.lookup_internal(&typed_local_path) {
                 return Some(typed_local_path);
             }
         }
-        
+
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
             if def.lookup_internal(&local_path) {
                 return Some(local_path);
@@ -422,7 +422,7 @@ impl FunctionResolver {
 
     fn typeinfo_to_desugared_type(info: &TypeInfo, span: Span) -> desugared_tree::Type<'static> {
         use std::borrow::Cow;
-        
+
         match info {
             TypeInfo::U8 => desugared_tree::Type::U8(span),
             TypeInfo::I8 => desugared_tree::Type::I8(span),
@@ -606,7 +606,10 @@ impl FunctionResolver {
         let mut local_path = self.current_module.clone();
         local_path.push(item.to_string());
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            if def.lookup_internal(&local_path) {
+            // FIX 1: Also accept exported functions so that `pub fn` can call themselves
+            // recursively. Previously only `lookup_internal` was checked here, causing
+            // public functions to fail to resolve their own name.
+            if def.lookup_internal(&local_path) || def.lookup_export(&local_path) {
                 return Some(local_path);
             }
         }
@@ -687,7 +690,9 @@ impl FunctionResolver {
         let mut local_path = self.current_module.clone();
         local_path.push(item.to_string());
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            if def.lookup_internal(&local_path) {
+            // FIX 1 (comptime mirror): Also accept exported functions so that public
+            // comptime functions can call themselves recursively.
+            if def.lookup_internal(&local_path) || def.lookup_export(&local_path) {
                 return Some(local_path);
             }
         }
@@ -919,7 +924,16 @@ impl FunctionResolver {
             span
         } = function;
 
+        // Push a scope for function arguments so they are visible inside the body.
+        self.push_scope();
+        for arg in &arguments.arguments {
+            let type_info = Self::parse_tree_type_to_typeinfo(&arg.r#type);
+            self.add_variable(arg.name.to_string(), type_info, comptime);
+        }
+
         let body = self.resolve_block(path, body, comptime)?;
+
+        self.pop_scope();
 
         let mut segments = Self::generate_segments(path);
         match kind {
@@ -971,10 +985,10 @@ impl FunctionResolver {
 
     fn resolve_block<'input>(&mut self, path: &PathBuf, block: parse_tree::Block<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Block<'input>> {
         let parse_tree::Block { statements, span } = block;
-        
+
         // Push a new scope for this block
         self.push_scope();
-        
+
         let mut new_statements = Vec::with_capacity(statements.len());
         let mut errors = Vec::new();
         for statement in statements {
@@ -1343,22 +1357,24 @@ impl FunctionResolver {
                 // Build the argument types for overload resolution
                 let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                // Try to resolve with types first, fall back to untyped
+                // FIX 2: The original code had the comptime/normal resolver selection
+                // swapped here (in_comptime used resolve_item, !in_comptime used
+                // resolve_comptime_item). Fixed to be consistent with all other sites.
                 let resolved_path = if !arg_types.is_empty() {
                     self.resolve_function_with_types(name, &arg_types)
                         .or_else(|| {
                             let action = if in_comptime {
-                                Self::resolve_item
-                            } else {
                                 Self::resolve_comptime_item
+                            } else {
+                                Self::resolve_item
                             };
                             action(self, name)
                         })
                 } else {
                     let action = if in_comptime {
-                        Self::resolve_item
-                    } else {
                         Self::resolve_comptime_item
+                    } else {
+                        Self::resolve_item
                     };
                     action(self, name)
                 };
@@ -1530,15 +1546,15 @@ impl FunctionResolver {
         } else {
             // Get the yield type from then_block
             let then_type = Self::get_block_yield_type(&then_block);
-            
+
             // Check all elifs for consistency
             let _elifs_types: Vec<_> = elifs.iter()
                 .map(|(_, block)| Self::get_block_yield_type(block))
                 .collect();
-            
+
             // Get the yield type from else_block
             let _else_type = else_block.as_ref().and_then(Self::get_block_yield_type);
-            
+
             // All branches must have the same type
             // For now, use the then_type as the unified type
             // In a full type checker, this would verify all branches match
