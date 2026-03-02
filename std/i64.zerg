@@ -1,0 +1,90 @@
+comptime import compiler;
+
+
+pub fun (+)(x: i64, y: i64): i64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.add");
+    }
+}
+
+pub fun (-)(x: i64, y: i64): i64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.sub");
+    }
+}
+
+pub fun (*)(x: i64, y: i64): i64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.mul");
+    }
+}
+
+pub fun (/)(x: i64, y: i64): i64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.div_s");
+    }
+}
+
+pub fun (%)(x: i64, y: i64): i64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.rem_s");
+    }
+}
+
+pub fun (==)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.eq");
+    }
+}
+
+pub fun (!=)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.ne");
+    }
+}
+
+pub fun (<)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.lt_s");
+    }
+}
+
+pub fun (<=)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.le_s");
+    }
+}
+
+pub fun (>)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.gt_s");
+    }
+}
+
+pub fun (>=)(x: i64, y: i64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i64.ge_s");
+    }
+}
