@@ -71,6 +71,8 @@ pub struct FileDefinitions {
     exports: HashSet<Vec<String>>,
     /// The full file path including the name of the function
     internals: HashSet<Vec<String>>,
+    /// Functions declared in extern blocks — visible within the module like internals,
+    /// but flagged separately so the code generator knows they are linked externally.
     externals: HashSet<Vec<String>>,
 }
 
@@ -105,6 +107,12 @@ impl FileDefinitions {
 
     pub fn lookup_external(&self, path: &[String]) -> bool {
         self.externals.contains(path)
+    }
+
+    /// Returns true if the path is resolvable from within this module (export, internal,
+    /// or external declaration).
+    pub fn lookup_any(&self, path: &[String]) -> bool {
+        self.exports.contains(path) || self.internals.contains(path) || self.externals.contains(path)
     }
 }
 
@@ -341,7 +349,7 @@ impl FunctionResolver {
         }
 
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            if def.lookup_internal(&local_path) {
+            if def.lookup_any(&local_path) {
                 return Some(local_path);
             }
         }
@@ -543,8 +551,6 @@ impl FunctionResolver {
             if segments.len() >= 1 {
                 let module_path = &segments[..(segments.len() - 1)];
 
-                // Helper: try exact module key, or fallback to a file key whose trailing
-                // segments match module_path, allowing the file's last segment to contain an extension.
                 let find_module_key = |module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>| -> Option<Vec<String>> {
                     if files.contains_key(module_path) {
                         return Some(module_path.to_vec());
@@ -556,7 +562,6 @@ impl FunctionResolver {
                         for (i, seg) in module_path.iter().enumerate() {
                             let key_seg = &key[start + i];
                             if i + 1 == module_path.len() {
-                                // last segment: compare without extension
                                 let key_base = key_seg.split('.').next().unwrap_or(key_seg);
                                 if key_base != seg { matched = false; break; }
                             } else {
@@ -574,13 +579,14 @@ impl FunctionResolver {
                     let mut full = module_key.clone();
                     full.push(segments[segments.len() - 1].clone());
                     if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_export(&full) {
+                        // exports and externals are both visible to external callers
+                        if def.lookup_export(&full) || def.lookup_external(&full) {
                             return Some(full);
                         }
                     }
                 }
 
-                // also check as internal if in same module (with same fallback)
+                // also check as internal/external if in same module
                 let mut local_path = self.current_module.clone();
                 for seg in module_path {
                     local_path.push(seg.clone());
@@ -589,7 +595,7 @@ impl FunctionResolver {
                     let mut full = module_key.clone();
                     full.push(segments[segments.len() - 1].clone());
                     if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_internal(&full) {
+                        if def.lookup_any(&full) {
                             return Some(full);
                         }
                     }
@@ -600,7 +606,8 @@ impl FunctionResolver {
 
         for path in &paths {
             if let Some(def) = self.files.get(&path[..(path.len() - 1)]) {
-                if def.lookup_export(path) {
+                // imports can only see exports and externals of other modules
+                if def.lookup_export(path) || def.lookup_external(path) {
                     return Some(path.clone());
                 }
             }
@@ -609,10 +616,8 @@ impl FunctionResolver {
         let mut local_path = self.current_module.clone();
         local_path.push(item.to_string());
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            // FIX 1: Also accept exported functions so that `pub fn` can call themselves
-            // recursively. Previously only `lookup_internal` was checked here, causing
-            // public functions to fail to resolve their own name.
-            if def.lookup_internal(&local_path) || def.lookup_export(&local_path) {
+            // Within the same module, all three visibility classes are in scope.
+            if def.lookup_any(&local_path) {
                 return Some(local_path);
             }
         }
@@ -659,7 +664,7 @@ impl FunctionResolver {
                     let mut full = module_key.clone();
                     full.push(segments[segments.len() - 1].clone());
                     if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_export(&full) {
+                        if def.lookup_export(&full) || def.lookup_external(&full) {
                             return Some(full);
                         }
                     }
@@ -673,7 +678,7 @@ impl FunctionResolver {
                     let mut full = module_key.clone();
                     full.push(segments[segments.len() - 1].clone());
                     if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_internal(&full) {
+                        if def.lookup_any(&full) {
                             return Some(full);
                         }
                     }
@@ -684,7 +689,7 @@ impl FunctionResolver {
 
         for path in &paths {
             if let Some(def) = self.files.get(&path[..(path.len() - 1)]) {
-                if def.lookup_export(path) {
+                if def.lookup_export(path) || def.lookup_external(path) {
                     return Some(path.clone());
                 }
             }
@@ -693,9 +698,7 @@ impl FunctionResolver {
         let mut local_path = self.current_module.clone();
         local_path.push(item.to_string());
         if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            // FIX 1 (comptime mirror): Also accept exported functions so that public
-            // comptime functions can call themselves recursively.
-            if def.lookup_internal(&local_path) || def.lookup_export(&local_path) {
+            if def.lookup_any(&local_path) {
                 return Some(local_path);
             }
         }
@@ -766,7 +769,10 @@ impl FunctionResolver {
                 }
             }
         }
-        // also register functions declared inside extern blocks (they live in same namespace)
+
+        // Register extern-block functions using insert_external so the code generator
+        // can distinguish them from ordinary definitions.  They live in the *module's*
+        // namespace (same path segments as the file), NOT under the library name.
         for r#extern in file.extern_iter() {
             for function in &r#extern.functions {
                 let arg_types: Vec<TypeInfo> = function.arguments.arguments.iter()
@@ -777,11 +783,10 @@ impl FunctionResolver {
                     parse_tree::FunctionKind::Named { name, .. } => {
                         let mut func_path = segments.clone();
                         func_path.push(name.to_string());
-                        if function.public {
-                            file_def.insert_export(func_path.clone());
-                        } else {
-                            file_def.insert_internal(func_path.clone());
-                        }
+                        // Always register as external regardless of the `pub` modifier;
+                        // visibility for extern functions is controlled by whether the
+                        // containing module is imported, not by the extern block itself.
+                        file_def.insert_external(func_path.clone());
                         self.function_signatures.insert(func_path, FunctionSignature {
                             argument_types: arg_types.clone(),
                             return_type: return_type.clone(),
@@ -812,11 +817,7 @@ impl FunctionResolver {
                         };
                         let mut func_path = segments.clone();
                         func_path.push(name.to_string());
-                        if function.public {
-                            file_def.insert_export(func_path.clone());
-                        } else {
-                            file_def.insert_internal(func_path.clone());
-                        }
+                        file_def.insert_external(func_path.clone());
                         self.function_signatures.insert(func_path, FunctionSignature {
                             argument_types: arg_types.clone(),
                             return_type: return_type.clone(),
@@ -825,8 +826,6 @@ impl FunctionResolver {
                 }
             }
         }
-
-        // extern declarations will be handled in the resolution stage below
 
         self.files.insert(segments, file_def);
     }
@@ -877,11 +876,10 @@ impl FunctionResolver {
                     functions.push(function);
                 }
                 parse_tree::TopLevelStatement::Extern(r#extern) => {
+                    // Stash for desugaring into the externals list on the file node.
+                    // Do NOT also push the contained functions into `functions` — they
+                    // are resolved below via externs_raw to avoid double-resolution.
                     externs_raw.push(r#extern.clone());
-                    // also resolve the contained functions normally so they appear in namespace
-                    for function in &r#extern.functions {
-                        functions.push(function.clone());
-                    }
                 }
             }
         }
@@ -892,7 +890,10 @@ impl FunctionResolver {
         }
         let functions = new_functions;
 
-        // convert extern blocks to desugared externs
+        // Resolve extern-block functions separately and collect them into desugared
+        // Extern nodes.  Each extern function ends up in the file's `externals` list
+        // rather than its `functions` list so that downstream passes can treat them
+        // differently (e.g. emit an `extern "C"` declaration instead of a definition).
         let mut new_externs = Vec::with_capacity(externs_raw.len());
         for r#extern in externs_raw {
             let mut desugared_funcs = Vec::with_capacity(r#extern.functions.len());
@@ -1363,9 +1364,6 @@ impl FunctionResolver {
                 // Build the argument types for overload resolution
                 let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                // FIX 2: The original code had the comptime/normal resolver selection
-                // swapped here (in_comptime used resolve_item, !in_comptime used
-                // resolve_comptime_item). Fixed to be consistent with all other sites.
                 let resolved_path = if !arg_types.is_empty() {
                     self.resolve_function_with_types(name, &arg_types)
                         .or_else(|| {
@@ -1688,5 +1686,53 @@ mod tests {
 
         let path2 = resolver.resolve_comptime_item("put_instruction");
         assert_eq!(path2, Some(vec!["compiler".to_string(), "put_instruction".to_string()]));
+    }
+
+    #[test]
+    fn extern_function_resolves_in_same_module() {
+        use std::collections::HashMap;
+
+        let mut resolver = FunctionResolver::new();
+
+        // Simulate a file at path ["mymodule"] that declares an extern function "printf"
+        let mut file_def = FileDefinitions::new();
+        file_def.insert_external(vec!["mymodule".to_string(), "printf".to_string()]);
+        resolver.files.insert(vec!["mymodule".to_string()], file_def);
+        resolver.function_signatures.insert(
+            vec!["mymodule".to_string(), "printf".to_string()],
+            FunctionSignature {
+                argument_types: vec![TypeInfo::String],
+                return_type: TypeInfo::Unit,
+            },
+        );
+
+        // When the current module IS mymodule, lookup_any covers externals
+        resolver.set_current_module(vec!["mymodule".to_string()]);
+        let resolved = resolver.resolve_item("printf");
+        assert_eq!(resolved, Some(vec!["mymodule".to_string(), "printf".to_string()]));
+    }
+
+    #[test]
+    fn extern_function_resolves_via_import() {
+        let mut resolver = FunctionResolver::new();
+
+        // Simulate a file at path ["libc"] that declares an extern function "malloc"
+        let mut file_def = FileDefinitions::new();
+        file_def.insert_external(vec!["libc".to_string(), "malloc".to_string()]);
+        resolver.files.insert(vec!["libc".to_string()], file_def);
+        resolver.function_signatures.insert(
+            vec!["libc".to_string(), "malloc".to_string()],
+            FunctionSignature {
+                argument_types: vec![TypeInfo::U64],
+                return_type: TypeInfo::Unit,
+            },
+        );
+
+        // Importing ["libc"] puts it in scope; externals are visible to importers
+        resolver.add_current_path(vec!["libc".to_string()]);
+        resolver.set_current_module(vec!["mymodule".to_string()]);
+
+        let resolved = resolver.resolve_item("malloc");
+        assert_eq!(resolved, Some(vec!["libc".to_string(), "malloc".to_string()]));
     }
 }
