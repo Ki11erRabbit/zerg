@@ -372,6 +372,9 @@ impl FunctionResolver {
             desugared_tree::Expression::ConstantString { .. } => {
                 Some(TypeInfo::String)
             }
+            desugared_tree::Expression::ConstantBool { .. } => {
+                Some(TypeInfo::Bool)
+            }
             desugared_tree::Expression::FunctionCall { return_type, .. } => {
                 Self::desugared_type_to_typeinfo(return_type)
             }
@@ -1069,6 +1072,9 @@ impl FunctionResolver {
             }
             parse_tree::Expression::ConstantString { value, span } => {
                 desugared_tree::Expression::ConstantString { value, span }
+            }
+            parse_tree::Expression::ConstantBool { value, span } => {
+                desugared_tree::Expression::ConstantBool { value, span }
             }
             parse_tree::Expression::FunctionCall { name, args, span } => {
                 let mut new_args = Vec::with_capacity(args.len());

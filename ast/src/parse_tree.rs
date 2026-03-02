@@ -281,6 +281,10 @@ pub enum Expression<'input> {
         value: Cow<'input, str>,
         span: Span,
     },
+    ConstantBool {
+        value: bool,
+        span: Span,
+    },
     FunctionCall {
         name: Cow<'input, str>,
         args: Vec<Expression<'input>>,

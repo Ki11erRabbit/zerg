@@ -54,6 +54,7 @@ extern {
         "!" => lexer::Token::Not,
         Number => lexer::Token::Number(<Cow<'input, str>>),
         String => lexer::Token::String(<Cow<'input, str>>),
+        Bool => lexer::Token::Bool(<bool>),
         Identifier => lexer::Token::Identifier(<Cow<'input, str>>),
     }
 }
@@ -477,6 +478,7 @@ BaseExpr: Expression<'input> = {
     <start: @L> <name:Identifier> <end: @R> => Expression::Variable { name, span: Span::new(start, end) },
     <start: @L> <value:Number> <end: @R> => Expression::ConstantNumber { value, span: Span::new(start, end) },
     <start: @L> <value:String> <end: @R> => Expression::ConstantString { value, span: Span::new(start, end) },
+    <start: @L> <value:Bool> <end: @R> => Expression::ConstantBool { value, span: Span::new(start, end) },
     <start: @L> "(" <expr:Expression> ")" <end: @R> => Expression::Parenthesized { expr: Box::new(expr), span: Span::new(start, end) },
 };
 
@@ -493,4 +495,6 @@ Operator: Operator = {
     ">=" => Operator::GreaterThanEquals,
     "<=" => Operator::LessThanEquals,
     "!" => Operator::Not,
+    "||" => Operator::Or,
+    "&&" => Operator::And,
 };

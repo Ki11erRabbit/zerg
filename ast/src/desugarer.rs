@@ -116,6 +116,7 @@ fn desugar_expression(expr: Expression) -> Expression {
         Expression::Variable { name, span } => Expression::Variable { name, span },
         Expression::ConstantNumber { value, span } => Expression::ConstantNumber { value, span },
         Expression::ConstantString { value, span } => Expression::ConstantString { value, span },
+        Expression::ConstantBool { value, span } => Expression::ConstantBool { value, span },
         Expression::FunctionCall { name, args, span } => {
             let args = args.into_iter().map(|expr| desugar_expression(expr)).collect();
             Expression::FunctionCall { name, args, span }

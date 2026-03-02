@@ -1,0 +1,36 @@
+comptime import compiler;
+
+
+pub fun (==)(x: bool, y: bool): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.eq");
+    }
+}
+
+pub fun (!=)(x: bool, y: bool): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("i32.ne");
+    }
+}
+
+pub inline fun (||)(x: bool, lazy y: bool): bool {
+    if x {
+        return true;
+    } elif y {
+        return true;
+    };
+    return false;
+}
+
+pub inline fun (&&)(x: bool, lazy y: bool): bool {
+    if x {
+        if y {
+            return true;
+        };
+    };
+    return false;
+}

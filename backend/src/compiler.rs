@@ -568,6 +568,12 @@ impl<'input> Compiler<'input> {
                     _ => unreachable!("Non numeric type in constant number")
                 }
             }
+            desugared_tree::Expression::ConstantBool { value, .. } => {
+                if yield_value {
+                    let value = if value { 1 } else { 0 };
+                    function.instruction(&Instruction::I32Const(value));
+                }
+            }
             desugared_tree::Expression::Return { value, .. } => {
                 if let Some(value) = value {
                     self.compile_expr(module, function, *value, true)?;
@@ -639,15 +645,20 @@ impl<'input> Compiler<'input> {
 
         function.instruction(&Instruction::If(block_type));
         self.compile_block(module, function, then_block, yield_value)?;
+        let elif_count = elifs.len();
         for (condition, then_block) in elifs {
             function.instruction(&Instruction::Else);
             self.compile_expr(module, function, condition, true)?;
             function.instruction(&Instruction::If(block_type));
             self.compile_block(module, function, then_block, yield_value)?;
+
         }
         if let Some(else_block) = else_block {
             function.instruction(&Instruction::Else);
             self.compile_block(module, function, else_block, yield_value)?;
+        }
+        for _ in 0..elif_count {
+            function.instruction(&Instruction::End);
         }
         function.instruction(&Instruction::End);
 

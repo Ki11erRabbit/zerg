@@ -70,6 +70,7 @@ pub enum Token<'input> {
     // Constants
     Number(Cow<'input, str>),
     String(Cow<'input, str>),
+    Bool(bool),
     // Identifier
     Identifier(Cow<'input, str>),
 }
@@ -284,6 +285,8 @@ impl<'input> Lexer<'input> {
                          "lazy" => Some(Ok((start, Token::Lazy,  end))),
                          "comptime" => Some(Ok((start, Token::Comptime,  end))),
                          "extern" => Some(Ok((start, Token::Extern,  end))),
+                         "true" => Some(Ok((start, Token::Bool(true), end))),
+                         "false" => Some(Ok((start, Token::Bool(false), end))),
                          x => Some(Ok((start, Token::Identifier(Cow::Borrowed(x)),  end))),
                      };
                 }

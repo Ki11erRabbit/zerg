@@ -1,7 +1,7 @@
 comptime import compiler;
 
 
-pub fun (+)(x: i32, y: i32): i32 {
+pub fun (+)(x: u32, y: u32): u32 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -9,7 +9,7 @@ pub fun (+)(x: i32, y: i32): i32 {
     }
 }
 
-pub fun (-)(x: i32, y: i32): i32 {
+pub fun (-)(x: u32, y: u32): u32 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -17,7 +17,7 @@ pub fun (-)(x: i32, y: i32): i32 {
     }
 }
 
-pub fun (*)(x: i32, y: i32): i32 {
+pub fun (*)(x: u32, y: u32): u32 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -25,23 +25,23 @@ pub fun (*)(x: i32, y: i32): i32 {
     }
 }
 
-pub fun (/)(x: i32, y: i32): i32 {
+pub fun (/)(x: u32, y: u32): u32 {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.div_s");
+        put_instruction("i32.div_u");
     }
 }
 
-pub fun (%)(x: i32, y: i32): i32 {
+pub fun (%)(x: u32, y: u32): u32 {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.rem_s");
+        put_instruction("i32.rem_u");
     }
 }
 
-pub fun (==)(x: i32, y: i32): bool {
+pub fun (==)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -49,7 +49,7 @@ pub fun (==)(x: i32, y: i32): bool {
     }
 }
 
-pub fun (!=)(x: i32, y: i32): bool {
+pub fun (!=)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -57,34 +57,34 @@ pub fun (!=)(x: i32, y: i32): bool {
     }
 }
 
-pub fun (<)(x: i32, y: i32): bool {
+pub fun (<)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.lt_s");
+        put_instruction("i32.lt_u");
     }
 }
 
-pub fun (<=)(x: i32, y: i32): bool {
+pub fun (<=)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.le_s");
+        put_instruction("i32.le_u");
     }
 }
 
-pub fun (>)(x: i32, y: i32): bool {
+pub fun (>)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.gt_s");
+        put_instruction("i32.gt_u");
     }
 }
 
-pub fun (>=)(x: i32, y: i32): bool {
+pub fun (>=)(x: u32, y: u32): bool {
     comptime {
         x.use_variable();
         y.use_variable();
-        put_instruction("i32.ge_s");
+        put_instruction("i32.ge_u");
     }
 }

@@ -175,6 +175,9 @@ impl<'input> Interpreter {
             Expression::ConstantString { value, .. } => {
                 return Ok(Value::String(value.to_string()));
             }
+            Expression::ConstantBool { value, .. } => {
+                return Ok(Value::Bool(value));
+            }
             Expression::Parenthesized { expr, .. } => {
                 let value = self.interpret_expr(compiler, function, *expr, out)?;
                 return Ok(value);
@@ -305,6 +308,12 @@ impl<'input> Interpreter {
                     "i32.rem_s" => {
                         function.instruction(&Instruction::I32RemS);
                     }
+                    "i32.div_u" => {
+                        function.instruction(&Instruction::I32DivU);
+                    }
+                    "i32.rem_u" => {
+                        function.instruction(&Instruction::I32RemU);
+                    }
                     "i32.eq" => {
                         function.instruction(&Instruction::I32Eq);
                     }
@@ -322,6 +331,69 @@ impl<'input> Interpreter {
                     }
                     "i32.ge_s" => {
                         function.instruction(&Instruction::I32GeS);
+                    }
+                    "i32.lt_u" => {
+                        function.instruction(&Instruction::I32LtU);
+                    }
+                    "i32.le_u" => {
+                        function.instruction(&Instruction::I32LeU);
+                    }
+                    "i32.gt_u" => {
+                        function.instruction(&Instruction::I32GtU);
+                    }
+                    "i32.ge_u" => {
+                        function.instruction(&Instruction::I32GeU);
+                    }
+                    "i64.add" => {
+                        function.instruction(&Instruction::I64Add);
+                    }
+                    "i64.sub" => {
+                        function.instruction(&Instruction::I64Sub);
+                    }
+                    "i64.mul" => {
+                        function.instruction(&Instruction::I64Mul);
+                    }
+                    "i64.div_s" => {
+                        function.instruction(&Instruction::I64DivS);
+                    }
+                    "i64.rem_s" => {
+                        function.instruction(&Instruction::I64RemS);
+                    }
+                    "i64.div_u" => {
+                        function.instruction(&Instruction::I64DivU);
+                    }
+                    "i64.rem_u" => {
+                        function.instruction(&Instruction::I64RemU);
+                    }
+                    "i64.eq" => {
+                        function.instruction(&Instruction::I64Eq);
+                    }
+                    "i64.ne" => {
+                        function.instruction(&Instruction::I64Ne);
+                    }
+                    "i64.lt_s" => {
+                        function.instruction(&Instruction::I64LtS);
+                    }
+                    "i64.le_s" => {
+                        function.instruction(&Instruction::I64LeS);
+                    }
+                    "i64.gt_s" => {
+                        function.instruction(&Instruction::I64GtS);
+                    }
+                    "i64.ge_s" => {
+                        function.instruction(&Instruction::I64GeS);
+                    }
+                    "i64.lt_u" => {
+                        function.instruction(&Instruction::I64LtU);
+                    }
+                    "i64.le_u" => {
+                        function.instruction(&Instruction::I64LeU);
+                    }
+                    "i64.gt_u" => {
+                        function.instruction(&Instruction::I64GtU);
+                    }
+                    "i64.ge_u" => {
+                        function.instruction(&Instruction::I64GeU);
                     }
                     value => todo!("put instruction: {}", value),
                 }
