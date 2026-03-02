@@ -395,6 +395,66 @@ impl<'input> Interpreter {
                     "i64.ge_u" => {
                         function.instruction(&Instruction::I64GeU);
                     }
+                    "f32.add" => {
+                        function.instruction(&Instruction::F32Add);
+                    }
+                    "f32.sub" => {
+                        function.instruction(&Instruction::F32Sub);
+                    }
+                    "f32.mul" => {
+                        function.instruction(&Instruction::F32Mul);
+                    }
+                    "f32.div" => {
+                        function.instruction(&Instruction::F32Div);
+                    }
+                    "f32.eq" => {
+                        function.instruction(&Instruction::F32Eq);
+                    }
+                    "f32.ne" => {
+                        function.instruction(&Instruction::F32Ne);
+                    }
+                    "f32.lt" => {
+                        function.instruction(&Instruction::F32Lt);
+                    }
+                    "f32.le" => {
+                        function.instruction(&Instruction::F32Le);
+                    }
+                    "f32.gt" => {
+                        function.instruction(&Instruction::F32Gt);
+                    }
+                    "f32.ge" => {
+                        function.instruction(&Instruction::F32Ge);
+                    }
+                    "f64.add" => {
+                        function.instruction(&Instruction::F64Add);
+                    }
+                    "f64.sub" => {
+                        function.instruction(&Instruction::F64Sub);
+                    }
+                    "f64.mul" => {
+                        function.instruction(&Instruction::F64Mul);
+                    }
+                    "f64.div" => {
+                        function.instruction(&Instruction::F64Div);
+                    }
+                    "f64.eq" => {
+                        function.instruction(&Instruction::F64Eq);
+                    }
+                    "f64.ne" => {
+                        function.instruction(&Instruction::F64Ne);
+                    }
+                    "f64.lt" => {
+                        function.instruction(&Instruction::F64Lt);
+                    }
+                    "f64.le" => {
+                        function.instruction(&Instruction::F64Le);
+                    }
+                    "f64.gt" => {
+                        function.instruction(&Instruction::F64Gt);
+                    }
+                    "f64.ge" => {
+                        function.instruction(&Instruction::F64Ge);
+                    }
                     value => todo!("put instruction: {}", value),
                 }
             }

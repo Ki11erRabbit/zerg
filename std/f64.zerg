@@ -1,0 +1,82 @@
+comptime import compiler;
+
+
+pub fun (+)(x: f64, y: f64): f64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.add");
+    }
+}
+
+pub fun (-)(x: f64, y: f64): f64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.sub");
+    }
+}
+
+pub fun (*)(x: f64, y: f64): f64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.mul");
+    }
+}
+
+pub fun (/)(x: f64, y: f64): f64 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.div");
+    }
+}
+
+pub fun (==)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.eq");
+    }
+}
+
+pub fun (!=)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.ne");
+    }
+}
+
+pub fun (<)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.lt");
+    }
+}
+
+pub fun (<=)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.le");
+    }
+}
+
+pub fun (>)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.gt");
+    }
+}
+
+pub fun (>=)(x: f64, y: f64): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f64.ge");
+    }
+}

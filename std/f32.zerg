@@ -1,0 +1,82 @@
+comptime import compiler;
+
+
+pub fun (+)(x: f32, y: f32): f32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.add");
+    }
+}
+
+pub fun (-)(x: f32, y: f32): f32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.sub");
+    }
+}
+
+pub fun (*)(x: f32, y: f32): f32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.mul");
+    }
+}
+
+pub fun (/)(x: f32, y: f32): f32 {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.div");
+    }
+}
+
+pub fun (==)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.eq");
+    }
+}
+
+pub fun (!=)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.ne");
+    }
+}
+
+pub fun (<)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.lt");
+    }
+}
+
+pub fun (<=)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.le");
+    }
+}
+
+pub fun (>)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.gt");
+    }
+}
+
+pub fun (>=)(x: f32, y: f32): bool {
+    comptime {
+        x.use_variable();
+        y.use_variable();
+        put_instruction("f32.ge");
+    }
+}
