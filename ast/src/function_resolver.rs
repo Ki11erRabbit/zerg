@@ -579,8 +579,7 @@ impl FunctionResolver {
                     let mut full = module_key.clone();
                     full.push(segments[segments.len() - 1].clone());
                     if let Some(def) = self.files.get(&module_key) {
-                        // exports and externals are both visible to external callers
-                        if def.lookup_export(&full) || def.lookup_external(&full) {
+                        if def.lookup_export(&full) {
                             return Some(full);
                         }
                     }
@@ -606,8 +605,8 @@ impl FunctionResolver {
 
         for path in &paths {
             if let Some(def) = self.files.get(&path[..(path.len() - 1)]) {
-                // imports can only see exports and externals of other modules
-                if def.lookup_export(path) || def.lookup_external(path) {
+                // imports can only see exports of other modules
+                if def.lookup_export(path) {
                     return Some(path.clone());
                 }
             }
@@ -1713,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn extern_function_resolves_via_import() {
+    fn extern_function_not_visible_via_import() {
         let mut resolver = FunctionResolver::new();
 
         // Simulate a file at path ["libc"] that declares an extern function "malloc"
@@ -1733,6 +1732,6 @@ mod tests {
         resolver.set_current_module(vec!["mymodule".to_string()]);
 
         let resolved = resolver.resolve_item("malloc");
-        assert_eq!(resolved, Some(vec!["libc".to_string(), "malloc".to_string()]));
+        assert_eq!(resolved, None);
     }
 }

@@ -95,7 +95,10 @@ pub struct ModuleDef<'input> {
     name: Vec<String>,
     definitions: HashMap<String, Definition>,
     comptime_definitions: HashMap<String, ComptimeDefinition<'input>>,
+    /// u32 is the index into the current module's function table
     imports: HashMap<Vec<String>, u32>,
+    /// Right now this is just used for extern functions
+    re_exports: HashMap<Vec<String>, u32>,
     file: Option<desugared_tree::File<'input>>,
 }
 
@@ -117,6 +120,7 @@ impl<'input> ModuleDef<'input> {
             definitions: HashMap::new(),
             comptime_definitions: HashMap::new(),
             imports: HashMap::new(),
+            re_exports: HashMap::new(),
             file: None,
         };
 
@@ -124,9 +128,18 @@ impl<'input> ModuleDef<'input> {
             out.load_block_imports(&mut wasm_module, &func.body)
         }
 
+        for r#extern in file.externals.iter() {
+            for func in r#extern.functions.iter() {
+                out.add_extern_function(&r#extern.library, wasm_module.next_function_index, func, &mut wasm_module);
+                wasm_module.next_function_index += 1;
+            }
+        }
+
         for (i, func) in file.functions.iter().enumerate() {
             out.add_function(wasm_module.next_function_index + i as u32, func, &mut wasm_module);
         }
+        wasm_module.next_function_index += file.functions.len() as u32;
+
         out.file = Some(file);
         (out, wasm_module)
     }
@@ -182,9 +195,10 @@ impl<'input> ModuleDef<'input> {
         } else {
             Vec::new()
         };
+        let type_index = module.types.len();
         module.types.ty().function(parameters, return_type);
 
-        module.functions.function(index);
+        module.functions.function(type_index);
         if *public {
             module.exports.export(&name, ExportKind::Func, index);
         }
@@ -193,6 +207,54 @@ impl<'input> ModuleDef<'input> {
         
         let def = Definition::new(index, r#type);
         self.definitions.insert(name, def);
+    }
+
+    fn add_extern_function(
+        &mut self,
+        library: &str,
+        function_index: u32,
+        function: &desugared_tree::Function<'input>,
+        module: &mut WasmModuleGroup,
+    ) {
+        let desugared_tree::Function {
+            comptime,
+            arguments,
+            return_type,
+            path,
+            ..
+        } = function;
+        let name = path.last().as_ref().unwrap().segment.clone();
+        if *comptime {
+            self.comptime_definitions.insert(name, ComptimeDefinition::new(function.clone()));
+            return
+        }
+        let mut parameters = Vec::new();
+        let mut type_parameters = Vec::new();
+        for param in arguments.iter() {
+            let (local, ty) = convert_type(&param.r#type);
+            type_parameters.push(local);
+            if let Some(ty) = ty {
+                parameters.push(ty);
+            }
+        }
+        let (local, return_type) = convert_type(&return_type);
+        let return_type = if let Some(ty) = return_type {
+            vec![ty]
+        } else {
+            Vec::new()
+        };
+        let type_index = module.types.len();
+        module.types.ty().function(parameters, return_type);
+
+        module.functions.function(type_index);
+        module.imports.import(library, &name, EntityType::Function(function_index));
+
+        let r#type = Type::Function { parameters: type_parameters, return_type: Box::new(local) };
+
+        let def = Definition::new(function_index, r#type);
+        self.definitions.insert(name, def);
+
+        self.re_exports.insert(path.to_vec_strings(), function_index);
     }
 
     fn load_block_imports(&mut self, module: &mut WasmModuleGroup, block: &desugared_tree::Block) {
@@ -589,13 +651,14 @@ impl<'input> Compiler<'input> {
             desugared_tree::Expression::IfExpression(if_expr) => {
                 self.compile_if_expr(module, function, if_expr, yield_value)?;
             }
-            desugared_tree::Expression::FunctionCall { name, args, .. } => {
+            desugared_tree::Expression::FunctionCall { name, args, return_type, .. } => {
                 // TODO: check if function being called is inline, and evaluate body of function instead
 
                 for arg in args {
                     self.compile_expr(module, function, arg, true)?;
                 }
 
+                let path = name.to_vec_strings();
                 let mut module_path = name.to_vec_strings();
                 let name = module_path.pop().unwrap();
 
@@ -603,7 +666,11 @@ impl<'input> Compiler<'input> {
                 let def = module_def.get_definition(&name).unwrap();
 
                 let index = if module_path == self.current_path {
-                    def.type_index
+                    if let Some(index) = module_def.re_exports.get(&path) {
+                        *index
+                    } else {
+                        def.type_index
+                    }
                 } else {
                     let module_def = self.module_to_def.get(&self.current_path).unwrap();
                     let mut path = module_path;
@@ -613,7 +680,18 @@ impl<'input> Compiler<'input> {
                     *def_index
                 };
                 function.instruction(&Instruction::Call(index));
-                // TODO: check if function can yield a value. If it does and we don't yield, pop it
+                // Check if the function will yield a value and if it does but we don't yield it, then drop it
+                // If unit and we yield, just load a i32.
+                match return_type {
+                    desugared_tree::Type::Unit(_) if yield_value => {
+                        function.instruction(&Instruction::I32Const(0));
+                    }
+                    desugared_tree::Type::Unit(_) if !yield_value => {}
+                    _ if !yield_value => {
+                        function.instruction(&Instruction::Drop);
+                    }
+                    _ => {}
+                }
             }
             desugared_tree::Expression::ConstantString { .. } => {
                 todo!("string literal")
