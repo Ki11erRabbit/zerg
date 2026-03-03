@@ -1,0 +1,13 @@
+import std::io;
+import std::process;
+
+
+pub fun recurse() {
+    recurse();
+}
+
+pub fun main() {
+    exit(99);
+    recurse();
+    close(0);
+}

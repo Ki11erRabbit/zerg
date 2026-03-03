@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use wasm_encoder::{BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, ImportSection, Instruction, Module, TypeSection, ValType};
+use wasm_encoder::{BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, Ieee32, Ieee64, ImportSection, Instruction, MemorySection, MemoryType, Module, TypeSection, ValType};
 use ast::{desugared_tree};
 use crate::compiler::function_state::{FunctionState, VariableLocation};
 use crate::interpreter::{Interpreter, InterpreterError};
@@ -245,9 +245,7 @@ impl<'input> ModuleDef<'input> {
         };
         let type_index = module.types.len();
         module.types.ty().function(parameters, return_type);
-
-        module.functions.function(type_index);
-        module.imports.import(library, &name, EntityType::Function(function_index));
+        module.imports.import(library, &name, EntityType::Function(type_index));
 
         let r#type = Type::Function { parameters: type_parameters, return_type: Box::new(local) };
 
@@ -333,6 +331,7 @@ struct WasmModuleGroup {
     exports: ExportSection,
     imports: ImportSection,
     code: CodeSection,
+    memory: MemorySection,
     next_function_index: u32,
 }
 
@@ -344,6 +343,7 @@ impl WasmModuleGroup {
         let exports = ExportSection::new();
         let imports = ImportSection::new();
         let code = CodeSection::new();
+        let memory = MemorySection::new();
         WasmModuleGroup {
             module,
             types,
@@ -351,6 +351,7 @@ impl WasmModuleGroup {
             exports,
             imports,
             code,
+            memory,
             next_function_index: 0,
         }
     }
@@ -360,6 +361,7 @@ pub struct Compiler<'input> {
     module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
     state: FunctionState,
     current_path: Vec<String>,
+    main_module: Vec<String>,
 }
 
 impl<'input> Compiler<'input> {
@@ -368,6 +370,7 @@ impl<'input> Compiler<'input> {
             module_to_def: HashMap::new(),
             state: FunctionState::new(),
             current_path: Vec::new(),
+            main_module: Vec::new(),
         }
     }
 
@@ -445,14 +448,56 @@ impl<'input> Compiler<'input> {
             if path_buf.as_path().exists() {
                 std::fs::remove_dir_all(path_buf.as_path()).unwrap();
             }
+            module.imports.import("std.runtime.memory", "memory", EntityType::Memory(MemoryType { minimum: 1, maximum: Some(16), memory64: false, shared: false, page_size_log2: None }));
             module.module.section(&module.types);
             module.module.section(&module.imports);
             module.module.section(&module.functions);
+            module.module.section(&module.memory);
             module.module.section(&module.exports);
             module.module.section(&module.code);
 
             std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
         }
+        let mut path_buf = PathBuf::from("output");
+        path_buf.push("std.runtime.memory.wasm");
+        if path_buf.as_path().exists() {
+            std::fs::remove_dir_all(path_buf.as_path()).unwrap();
+        }
+        let mut module = WasmModuleGroup::new();
+        module.memory.memory(MemoryType { minimum: 1, maximum: Some(16), memory64: false, shared: false, page_size_log2: None });
+        module.exports.export("memory", ExportKind::Memory, 0);
+        module.module.section(&module.types);
+        module.module.section(&module.imports);
+        module.module.section(&module.functions);
+        module.module.section(&module.memory);
+        module.module.section(&module.exports);
+        module.module.section(&module.code);
+        std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
+
+        let mut path_buf = PathBuf::from("output");
+        path_buf.push("std.runtime.wasm");
+        if path_buf.as_path().exists() {
+            std::fs::remove_dir_all(path_buf.as_path()).unwrap();
+        }
+        let mut module = WasmModuleGroup::new();
+        module.imports.import("std.runtime.memory", "memory", EntityType::Memory(MemoryType { minimum: 1, maximum: Some(16), memory64: false, shared: false, page_size_log2: None }));
+        module.types.ty().function([], []);
+        module.imports.import(&self.main_module.join("."), "main", EntityType::Function(0));
+        module.functions.function(0);
+        let mut function = Function::new([]);
+        function.instructions()
+            .call(0)
+            .end();
+        module.code.function(&function);
+        module.exports.export("_start", ExportKind::Func, 0);
+        module.exports.export("memory", ExportKind::Memory, 0);
+        module.module.section(&module.types);
+        module.module.section(&module.imports);
+        module.module.section(&module.functions);
+        module.module.section(&module.memory);
+        module.module.section(&module.exports);
+        module.module.section(&module.code);
+        std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
 
         Ok(())
     }
@@ -483,7 +528,9 @@ impl<'input> Compiler<'input> {
         let def = self.module_to_def.get(&self.current_path).unwrap();
         // if there is a main function, export it as start.
         if let Some(main) = def.get_definition("main") {
-            module.exports.export("_start", ExportKind::Func, main.type_index);
+            // TODO: change this so that it generates the _start function that then calls main
+            //module.exports.export("_start", ExportKind::Func, main.type_index);
+            self.main_module = self.current_path.clone();
         }
 
         Ok(())

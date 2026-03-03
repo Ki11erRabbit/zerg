@@ -1,0 +1,8 @@
+extern "wasi_snapshot_preview1" {
+    fun proc_exit(status: i32);
+}
+
+
+pub fun exit(status: i32) {
+    proc_exit(status);
+}

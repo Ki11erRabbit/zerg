@@ -1,0 +1,13 @@
+
+
+extern "wasi_snapshot_preview1" {
+    fun fd_write(fd: i32, io_vecs: i32, io_vec_len: i32, n_written: i32): i32;
+    fun fd_read(fd: i32, io_vecs: i32, io_vec_len: i32, n_read: i32): i32;
+    fun fd_seek(fd: i32, offset: i64, whence: i32, new_offset: i32): i32;
+    fun fd_tell(fd: i32, offset: i32): i32;
+    fun fd_close(fd: i32): i32;
+}
+
+pub fun close(fd: i32): i32 {
+    return fd_close(fd);
+}
