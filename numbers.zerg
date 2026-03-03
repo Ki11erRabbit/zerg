@@ -1,4 +1,5 @@
 import std::i32;
+import std::u64;
 import std::bool;
 
 pub fun fact(n: i32): i32 {
@@ -8,7 +9,17 @@ pub fun fact(n: i32): i32 {
     return n * fact(n - 1);
 }
 
+pub fun fib(n: u64): u64 {
+    if n <= 1 {
+        return n;
+    };
+
+    return fib(n - 1) + fib(n - 2);
+}
+
+
 
 pub fun main() {
     let x: i32 = fact(12);
+    let y: u64 = fib(100000000);
 }

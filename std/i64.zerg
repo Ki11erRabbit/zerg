@@ -41,6 +41,10 @@ pub fun (%)(x: i64, y: i64): i64 {
     }
 }
 
+pub fun (-)(x: i64): i64 {
+    return x * -1;
+}
+
 pub fun (==)(x: i64, y: i64): bool {
     comptime {
         x.use_variable();

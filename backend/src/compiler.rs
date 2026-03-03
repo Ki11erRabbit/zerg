@@ -429,10 +429,14 @@ impl<'input> Compiler<'input> {
 
     fn compile_function(&mut self, module: &mut WasmModuleGroup, function: desugared_tree::Function) -> Result<(), CompileError> {
         let desugared_tree::Function {
+            comptime,
             arguments,
             body,
             ..
         } = function;
+        if comptime {
+            return Ok(());
+        }
         for (i, arg) in arguments.iter().enumerate() {
             let ty = convert_type(&arg.r#type).0;
             self.state.store_function_argument(&arg.name, ty, i as u32);

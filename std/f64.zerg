@@ -33,6 +33,13 @@ pub fun (/)(x: f64, y: f64): f64 {
     }
 }
 
+pub fun (-)(x: f64): f64 {
+    comptime {
+        x.use_variable();
+        put_instruction("f64.neg");
+    }
+}
+
 pub fun (==)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();

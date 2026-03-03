@@ -138,6 +138,24 @@ impl<'input> Lexer<'input> {
                             self.next_char();
                             return Some(Ok((start, Token::Arrow,  next + '>'.len_utf8())));
                         }
+                        match *ch {
+                            '0'..='9' => {
+                                let mut end = start;
+                                while let Some((next, chr)) = self.peek() {
+                                    end = *next;
+                                    let chr = *chr;
+                                    if chr.is_digit(10) || chr == '.' {
+                                        self.next_token();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                let string = &self.input[start..end];
+                                let token = Token::Number(Cow::Borrowed(string));
+                                return Some(Ok((start, token,  end)));
+                            }
+                            _ => {}
+                        }
                     }
                     return Some(Ok((start, Token::Minus,  start + '-'.len_utf8())))
                 },

@@ -41,6 +41,10 @@ pub fun (%)(x: i32, y: i32): i32 {
     }
 }
 
+pub fun (-)(x: i32): i32 {
+    return x * -1;
+}
+
 pub fun (==)(x: i32, y: i32): bool {
     comptime {
         x.use_variable();
