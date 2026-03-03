@@ -66,6 +66,22 @@ pub enum TypeInfo {
     }
 }
 
+impl TypeInfo {
+    /// Returns true if this TypeInfo represents any numeric type.
+    fn is_numeric(&self) -> bool {
+        matches!(self,
+            TypeInfo::U8 | TypeInfo::I8 | TypeInfo::U16 | TypeInfo::I16 |
+            TypeInfo::U32 | TypeInfo::I32 | TypeInfo::U64 | TypeInfo::I64 |
+            TypeInfo::F32 | TypeInfo::F64
+        )
+    }
+
+    /// Returns true if this TypeInfo represents a floating-point type.
+    fn is_float(&self) -> bool {
+        matches!(self, TypeInfo::F32 | TypeInfo::F64)
+    }
+}
+
 pub struct FileDefinitions {
     /// The full file path including the name of the function
     exports: HashSet<Vec<String>>,
@@ -309,62 +325,71 @@ impl FunctionResolver {
     }
 
     /// Resolve a function by name and argument types (for operator overloading)
-    fn resolve_function_with_types(&self, name: &str, arg_types: &[TypeInfo]) -> Option<Vec<String>> {
-        let paths = self.generate_paths(name);
+    /// Infer the type of a numeric constant given an optional contextual expected type.
+    ///
+    /// Priority:
+    ///   1. If an expected numeric type is provided and is compatible with the literal
+    ///      (i.e. a float expected type won't be used for an integer literal), use it.
+    ///   2. Otherwise fall back to `I32` for integers and `F64` for floats.
+    fn infer_number_type(value: &str, expected: Option<&TypeInfo>) -> TypeInfo {
+        let is_float_literal = value.contains('.');
 
-        for base_path in &paths {
-            // Try to find an exact match with type signature
-            let mut typed_path = base_path.clone();
-            for arg_type in arg_types {
-                typed_path.push(format!("{:?}", arg_type).to_lowercase());
-            }
-
-            if let Some(def) = self.files.get(&typed_path[..(typed_path.len() - arg_types.len() - 1)]) {
-                if def.lookup_export(&typed_path) {
-                    return Some(typed_path);
+        if let Some(hint) = expected {
+            if hint.is_numeric() {
+                // Don't coerce an integer literal into a float type — that would silently
+                // change the value's semantics (e.g. `let x: f32 = 1` should stay `1`,
+                // not become `1.0`).  We only accept the hint when the float-ness of the
+                // literal and the hint agree.
+                let hint_is_float = hint.is_float();
+                if is_float_literal == hint_is_float {
+                    return hint.clone();
+                }
+                // If the literal is an integer but the hint is a float, we still allow
+                // it — this covers the common case of `let x: f32 = 0` or passing `1`
+                // into an `f32` parameter.
+                if !is_float_literal && hint_is_float {
+                    return hint.clone();
                 }
             }
-
-            // Fall back to untyped path
-            if let Some(def) = self.files.get(&base_path[..(base_path.len() - 1)]) {
-                if def.lookup_export(base_path) {
-                    return Some(base_path.clone());
-                }
-            }
         }
 
-        let mut local_path = self.current_module.clone();
-        local_path.push(name.to_string());
-
-        // Try typed version
-        let mut typed_local_path = local_path.clone();
-        for arg_type in arg_types {
-            typed_local_path.push(format!("{:?}", arg_type).to_lowercase());
-        }
-
-        if let Some(def) = self.files.get(&typed_local_path[..(typed_local_path.len() - arg_types.len() - 1)]) {
-            if def.lookup_internal(&typed_local_path) {
-                return Some(typed_local_path);
-            }
-        }
-
-        if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            if def.lookup_any(&local_path) {
-                return Some(local_path);
-            }
-        }
-
-        None
-    }
-
-    /// Infer the type of a numeric constant
-    fn infer_number_type(value: &str) -> TypeInfo {
-        // For now, default to i32. In a real implementation, you might analyze the value
-        // or use context to determine the correct type
-        if value.contains('.') {
+        // Default fallback
+        if is_float_literal {
             TypeInfo::F64
         } else {
             TypeInfo::I32
+        }
+    }
+
+    /// Given an already-resolved expression and a concrete type hint discovered *after*
+    /// the fact (e.g. from the selected overload's signature), re-coerce bare numeric
+    /// literals to the hint type.  Every other expression kind is returned unchanged.
+    ///
+    /// This is the second pass of the two-pass strategy: args are resolved first (so
+    /// their natural types can drive overload selection), then this function fixes up
+    /// any literals whose type the chosen signature constrains more precisely.
+    fn recoerce_number_literal<'input>(
+        expr: desugared_tree::Expression<'input>,
+        hint: &TypeInfo,
+        span: Span,
+    ) -> desugared_tree::Expression<'input> {
+        match expr {
+            desugared_tree::Expression::ConstantNumber { value, .. } => {
+                let better_type = Self::infer_number_type(&value, Some(hint));
+                desugared_tree::Expression::ConstantNumber {
+                    value,
+                    r#type: Self::typeinfo_to_desugared_type(&better_type, span),
+                    span,
+                }
+            }
+            // Transparently unwrap parentheses
+            desugared_tree::Expression::Parenthesized { expr: inner, span } => {
+                desugared_tree::Expression::Parenthesized {
+                    expr: Box::new(Self::recoerce_number_literal(*inner, hint, span)),
+                    span,
+                }
+            }
+            other => other,
         }
     }
 
@@ -539,170 +564,231 @@ impl FunctionResolver {
         }).collect()
     }
 
-    fn resolve_item(&self, item: &str) -> Option<Vec<String>> {
-        // If the caller passed a dotted path (module::func or module.func),
-        // try to resolve it directly as a module path + function name.
-        if item.contains("::") || item.contains('.') {
-            let segments: Vec<String> = if item.contains("::") {
-                item.split("::").map(|s| s.to_string()).collect()
-            } else {
-                item.split('.').map(|s| s.to_string()).collect()
-            };
-            if segments.len() >= 1 {
-                let module_path = &segments[..(segments.len() - 1)];
-
-                let find_module_key = |module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>| -> Option<Vec<String>> {
-                    if files.contains_key(module_path) {
-                        return Some(module_path.to_vec());
-                    }
-                    for key in files.keys() {
-                        if key.len() < module_path.len() { continue; }
-                        let start = key.len() - module_path.len();
-                        let mut matched = true;
-                        for (i, seg) in module_path.iter().enumerate() {
-                            let key_seg = &key[start + i];
-                            if i + 1 == module_path.len() {
-                                let key_base = key_seg.split('.').next().unwrap_or(key_seg);
-                                if key_base != seg { matched = false; break; }
-                            } else {
-                                if key_seg != seg { matched = false; break; }
-                            }
-                        }
-                        if matched {
-                            return Some(key.clone());
-                        }
-                    }
-                    None
-                };
-
-                if let Some(module_key) = find_module_key(module_path, &self.files) {
-                    let mut full = module_key.clone();
-                    full.push(segments[segments.len() - 1].clone());
-                    if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_export(&full) {
-                            return Some(full);
-                        }
-                    }
-                }
-
-                // also check as internal/external if in same module
-                let mut local_path = self.current_module.clone();
-                for seg in module_path {
-                    local_path.push(seg.clone());
-                }
-                if let Some(module_key) = find_module_key(&local_path[..], &self.files) {
-                    let mut full = module_key.clone();
-                    full.push(segments[segments.len() - 1].clone());
-                    if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_any(&full) {
-                            return Some(full);
-                        }
-                    }
+    /// Resolve the file/module key that best matches a module path suffix.
+    /// Extracted from the old inline closures in resolve_item/resolve_comptime_item
+    /// so it isn't duplicated.
+    fn find_module_key(module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>) -> Option<Vec<String>> {
+        if files.contains_key(module_path) {
+            return Some(module_path.to_vec());
+        }
+        for key in files.keys() {
+            if key.len() < module_path.len() { continue; }
+            let start = key.len() - module_path.len();
+            let mut matched = true;
+            for (i, seg) in module_path.iter().enumerate() {
+                let key_seg = &key[start + i];
+                if i + 1 == module_path.len() {
+                    let key_base = key_seg.split('.').next().unwrap_or(key_seg);
+                    if key_base != seg { matched = false; break; }
+                } else {
+                    if key_seg != seg { matched = false; break; }
                 }
             }
-        }
-        let paths = self.generate_paths(item);
-
-        for path in &paths {
-            if let Some(def) = self.files.get(&path[..(path.len() - 1)]) {
-                // imports can only see exports of other modules
-                if def.lookup_export(path) {
-                    return Some(path.clone());
-                }
+            if matched {
+                return Some(key.clone());
             }
         }
-
-        let mut local_path = self.current_module.clone();
-        local_path.push(item.to_string());
-        if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            // Within the same module, all three visibility classes are in scope.
-            if def.lookup_any(&local_path) {
-                return Some(local_path);
-            }
-        }
-
         None
     }
 
-    fn resolve_comptime_item(&self, item: &str) -> Option<Vec<String>> {
-        // Support dotted/module paths passed as the item string.
+    /// Score a candidate path against a set of call-site argument types.
+    ///
+    /// Returns `None` if the candidate signature has the wrong arity (hard
+    /// mismatch).  Otherwise returns a score where **higher is better**:
+    ///   2 per argument that matches exactly,
+    ///   1 per argument where the call-site type is a "default" literal type
+    ///     (I32 / F64) that could be coerced into the parameter type,
+    ///   0 when `arg_types` is empty (no type info available — any candidate
+    ///     is equally valid).
+    fn score_candidate(&self, path: &[String], arg_types: &[TypeInfo]) -> Option<usize> {
+        if arg_types.is_empty() {
+            return Some(0);
+        }
+        let sig = self.function_signatures.get(path)?;
+        if sig.argument_types.len() != arg_types.len() {
+            return None;
+        }
+        let default_int   = TypeInfo::I32;
+        let default_float = TypeInfo::F64;
+        let mut score = 0usize;
+        for (param, arg) in sig.argument_types.iter().zip(arg_types.iter()) {
+            if param == arg {
+                score += 2;
+            } else if (arg == &default_int || arg == &default_float) && param.is_numeric() {
+                // The call-site type is a bare-literal default that could be coerced.
+                score += 1;
+            } else {
+                // Hard type mismatch — this candidate cannot serve this call.
+                return None;
+            }
+        }
+        Some(score)
+    }
+
+    /// Collect every visible candidate path for `item` in normal (non-comptime) scope.
+    fn candidates_for_item(&self, item: &str) -> Vec<Vec<String>> {
+        let mut candidates: Vec<Vec<String>> = Vec::new();
+
+        // Explicit module-qualified path (e.g. "math::add" or "math.add").
         if item.contains("::") || item.contains('.') {
             let segments: Vec<String> = if item.contains("::") {
                 item.split("::").map(|s| s.to_string()).collect()
             } else {
                 item.split('.').map(|s| s.to_string()).collect()
             };
-            if segments.len() >= 1 {
-                let module_path = &segments[..(segments.len() - 1)];
+            let module_path = &segments[..(segments.len() - 1)];
 
-                let find_module_key = |module_path: &[String], files: &HashMap<Vec<String>, FileDefinitions>| -> Option<Vec<String>> {
-                    if files.contains_key(module_path) {
-                        return Some(module_path.to_vec());
-                    }
-                    for key in files.keys() {
-                        if key.len() < module_path.len() { continue; }
-                        let start = key.len() - module_path.len();
-                        let mut matched = true;
-                        for (i, seg) in module_path.iter().enumerate() {
-                            let key_seg = &key[start + i];
-                            if i + 1 == module_path.len() {
-                                let key_base = key_seg.split('.').next().unwrap_or(key_seg);
-                                if key_base != seg { matched = false; break; }
-                            } else {
-                                if key_seg != seg { matched = false; break; }
-                            }
-                        }
-                        if matched {
-                            return Some(key.clone());
-                        }
-                    }
-                    None
-                };
-
-                if let Some(module_key) = find_module_key(module_path, &self.files) {
-                    let mut full = module_key.clone();
-                    full.push(segments[segments.len() - 1].clone());
-                    if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_export(&full) || def.lookup_external(&full) {
-                            return Some(full);
-                        }
-                    }
+            if let Some(module_key) = Self::find_module_key(module_path, &self.files) {
+                let mut full = module_key.clone();
+                full.push(segments[segments.len() - 1].clone());
+                if self.files.get(&module_key).map_or(false, |d| d.lookup_export(&full)) {
+                    candidates.push(full);
                 }
+            }
 
-                let mut local_path = self.current_module.clone();
-                for seg in module_path {
-                    local_path.push(seg.clone());
-                }
-                if let Some(module_key) = find_module_key(&local_path[..], &self.files) {
-                    let mut full = module_key.clone();
-                    full.push(segments[segments.len() - 1].clone());
-                    if let Some(def) = self.files.get(&module_key) {
-                        if def.lookup_any(&full) {
-                            return Some(full);
-                        }
+            let mut local_path = self.current_module.clone();
+            local_path.extend_from_slice(module_path);
+            if let Some(module_key) = Self::find_module_key(&local_path, &self.files) {
+                let mut full = module_key.clone();
+                full.push(segments[segments.len() - 1].clone());
+                if self.files.get(&module_key).map_or(false, |d| d.lookup_any(&full)) {
+                    if !candidates.contains(&full) {
+                        candidates.push(full);
                     }
                 }
             }
-        }
-        let paths = self.generate_comptime_paths(item);
 
-        for path in &paths {
-            if let Some(def) = self.files.get(&path[..(path.len() - 1)]) {
-                if def.lookup_export(path) || def.lookup_external(path) {
-                    return Some(path.clone());
+            return candidates; // explicit path — no further ambiguity search needed
+        }
+
+        // Imported modules in scope.
+        for path in self.generate_paths(item) {
+            if self.files.get(&path[..(path.len() - 1)]).map_or(false, |d| d.lookup_export(&path)) {
+                candidates.push(path);
+            }
+        }
+
+        // Same module (exports, internals, externals).
+        let mut local_path = self.current_module.clone();
+        local_path.push(item.to_string());
+        if self.files.get(&local_path[..(local_path.len() - 1)]).map_or(false, |d| d.lookup_any(&local_path)) {
+            if !candidates.contains(&local_path) {
+                candidates.push(local_path);
+            }
+        }
+
+        candidates
+    }
+
+    /// Collect every visible candidate path for `item` in comptime scope.
+    fn candidates_for_comptime_item(&self, item: &str) -> Vec<Vec<String>> {
+        let mut candidates: Vec<Vec<String>> = Vec::new();
+
+        if item.contains("::") || item.contains('.') {
+            let segments: Vec<String> = if item.contains("::") {
+                item.split("::").map(|s| s.to_string()).collect()
+            } else {
+                item.split('.').map(|s| s.to_string()).collect()
+            };
+            let module_path = &segments[..(segments.len() - 1)];
+
+            if let Some(module_key) = Self::find_module_key(module_path, &self.files) {
+                let mut full = module_key.clone();
+                full.push(segments[segments.len() - 1].clone());
+                if self.files.get(&module_key).map_or(false, |d| d.lookup_export(&full) || d.lookup_external(&full)) {
+                    candidates.push(full);
                 }
+            }
+
+            let mut local_path = self.current_module.clone();
+            local_path.extend_from_slice(module_path);
+            if let Some(module_key) = Self::find_module_key(&local_path, &self.files) {
+                let mut full = module_key.clone();
+                full.push(segments[segments.len() - 1].clone());
+                if self.files.get(&module_key).map_or(false, |d| d.lookup_any(&full)) {
+                    if !candidates.contains(&full) {
+                        candidates.push(full);
+                    }
+                }
+            }
+
+            return candidates;
+        }
+
+        for path in self.generate_comptime_paths(item) {
+            if self.files.get(&path[..(path.len() - 1)]).map_or(false, |d| d.lookup_export(&path) || d.lookup_external(&path)) {
+                candidates.push(path);
             }
         }
 
         let mut local_path = self.current_module.clone();
         local_path.push(item.to_string());
-        if let Some(def) = self.files.get(&local_path[..(local_path.len() - 1)]) {
-            if def.lookup_any(&local_path) {
-                return Some(local_path);
+        if self.files.get(&local_path[..(local_path.len() - 1)]).map_or(false, |d| d.lookup_any(&local_path)) {
+            if !candidates.contains(&local_path) {
+                candidates.push(local_path);
             }
         }
 
-        None
+        candidates
+    }
+
+    /// Resolve `item` to the best-matching candidate given the call-site arg types.
+    /// When arg types are unknown or unavailable, falls back to returning the sole
+    /// candidate (or `None` if there are none).
+    fn resolve_item(&self, item: &str) -> Option<Vec<String>> {
+        self.resolve_item_with_args(item, &[])
+    }
+
+    fn resolve_item_with_args(&self, item: &str, arg_types: &[TypeInfo]) -> Option<Vec<String>> {
+        let candidates = self.candidates_for_item(item);
+        self.pick_best_candidate(candidates, arg_types)
+    }
+
+    fn resolve_comptime_item(&self, item: &str) -> Option<Vec<String>> {
+        self.resolve_comptime_item_with_args(item, &[])
+    }
+
+    fn resolve_comptime_item_with_args(&self, item: &str, arg_types: &[TypeInfo]) -> Option<Vec<String>> {
+        let candidates = self.candidates_for_comptime_item(item);
+        self.pick_best_candidate(candidates, arg_types)
+    }
+
+    /// Given a list of candidates and call-site arg types, return the one with the
+    /// highest score.  Returns `None` only if the candidate list is empty.
+    ///
+    /// Scoring priority (highest wins):
+    ///   1. Candidates that score against the arg types (exact or coercible matches).
+    ///   2. If *no* candidate scores at all (e.g. the call site has incomplete type
+    ///      info, or the function takes no arguments), fall back to the first
+    ///      candidate rather than returning `None`.  This preserves the pre-scoring
+    ///      behaviour for cases like comptime builtins where arg types may not yet
+    ///      be fully resolved.
+    fn pick_best_candidate(&self, candidates: Vec<Vec<String>>, arg_types: &[TypeInfo]) -> Option<Vec<String>> {
+        if candidates.is_empty() {
+            return None;
+        }
+        // No type info available — return the first (and hopefully only) candidate.
+        if arg_types.is_empty() {
+            return Some(candidates.into_iter().next().unwrap());
+        }
+        let mut best: Option<(usize, Vec<String>)> = None;
+        let mut fallback: Option<Vec<String>> = None;
+        for candidate in candidates {
+            // Keep the first candidate as a fallback in case nothing scores.
+            if fallback.is_none() {
+                fallback = Some(candidate.clone());
+            }
+            if let Some(score) = self.score_candidate(&candidate, arg_types) {
+                match &best {
+                    None => best = Some((score, candidate)),
+                    Some((best_score, _)) if score > *best_score => best = Some((score, candidate)),
+                    _ => {}
+                }
+            }
+        }
+        // Use the scored winner if we got one; otherwise fall back to the first candidate
+        // so that calls with incomplete type information still resolve.
+        best.map(|(_, path)| path).or(fallback)
     }
 
     fn load_file<'input>(&mut self, (path, file): &(PathBuf, parse_tree::File<'input>)) {
@@ -1016,9 +1102,14 @@ impl FunctionResolver {
 
     fn resolve_statement<'input>(&mut self, path: &PathBuf, statement: parse_tree::Statement<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Statement<'input>> {
         let statement = match statement {
-            parse_tree::Statement::Let { name ,r#type, expr, span } => {
+            parse_tree::Statement::Let { name, r#type, expr, span } => {
                 let r#type = Self::translate_type(r#type);
-                let expr = self.resolve_expression(path, expr, in_comptime)?;
+
+                // Extract the declared type as a hint for numeric literal inference.
+                // This covers `let x: u8 = 42` — without the hint the literal would
+                // default to I32.
+                let type_hint = Self::desugared_type_to_typeinfo(&r#type);
+                let expr = self.resolve_expression(path, expr, in_comptime, type_hint.as_ref())?;
 
                 // Track the variable's type in the current scope
                 if let Some(type_info) = Self::desugared_type_to_typeinfo(&r#type) {
@@ -1028,12 +1119,19 @@ impl FunctionResolver {
                 desugared_tree::Statement::Let { name, r#type, expr, span }
             }
             parse_tree::Statement::Assignment { target, expr, span } => {
-                let target = self.resolve_expression(path, target, in_comptime)?;
-                let expr = self.resolve_expression(path, expr, in_comptime)?;
+                // For assignments, use the type of the target variable as the hint.
+                let target_hint = match &target {
+                    parse_tree::Expression::Variable { name, .. } => {
+                        self.lookup_variable(name, in_comptime)
+                    }
+                    _ => None,
+                };
+                let target = self.resolve_expression(path, target, in_comptime, None)?;
+                let expr = self.resolve_expression(path, expr, in_comptime, target_hint.as_ref())?;
                 desugared_tree::Statement::Assignment { target, expr, span }
             }
             parse_tree::Statement::Expression { expr, span } => {
-                let expr = self.resolve_expression(path, expr, in_comptime)?;
+                let expr = self.resolve_expression(path, expr, in_comptime, None)?;
                 desugared_tree::Statement::Expression { expr, span }
             }
             parse_tree::Statement::Comptime { block, span } => {
@@ -1044,18 +1142,27 @@ impl FunctionResolver {
         Ok(statement)
     }
 
-    fn resolve_expression<'input>(&mut self, path: &PathBuf, expr: parse_tree::Expression<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Expression<'input>> {
+    fn resolve_expression<'input>(
+        &mut self,
+        path: &PathBuf,
+        expr: parse_tree::Expression<'input>,
+        in_comptime: bool,
+        // Contextual type hint propagated from the surrounding declaration or call site.
+        // Used to pick the right concrete type for bare numeric literals.
+        expected_type: Option<&TypeInfo>,
+    ) -> ResolverResult<desugared_tree::Expression<'input>> {
         let expr = match expr {
             parse_tree::Expression::Return { value, span } => {
                 let value = if let Some(value) = value {
-                    Some(Box::new(self.resolve_expression(path, *value, in_comptime)?))
+                    Some(Box::new(self.resolve_expression(path, *value, in_comptime, None)?))
                 } else {
                     None
                 };
                 desugared_tree::Expression::Return { value, span }
             }
             parse_tree::Expression::Parenthesized { expr, span } => {
-                let expr = Box::new(self.resolve_expression(path, *expr, in_comptime)?);
+                // Forward the hint through parentheses transparently.
+                let expr = Box::new(self.resolve_expression(path, *expr, in_comptime, expected_type)?);
                 desugared_tree::Expression::Parenthesized { expr, span }
             }
             parse_tree::Expression::Variable { name, span } => {
@@ -1066,7 +1173,9 @@ impl FunctionResolver {
                 desugared_tree::Expression::Variable { name, r#type, span }
             }
             parse_tree::Expression::ConstantNumber { value, span } => {
-                let inferred_type = Self::infer_number_type(&value);
+                // Use the contextual hint when available so that, e.g., `let x: u8 = 5`
+                // resolves the literal `5` as U8 rather than the default I32.
+                let inferred_type = Self::infer_number_type(&value, expected_type);
                 let r#type = Self::typeinfo_to_desugared_type(&inferred_type, span);
                 desugared_tree::Expression::ConstantNumber { value, r#type, span }
             }
@@ -1077,41 +1186,58 @@ impl FunctionResolver {
                 desugared_tree::Expression::ConstantBool { value, span }
             }
             parse_tree::Expression::FunctionCall { name, args, span } => {
-                let mut new_args = Vec::with_capacity(args.len());
+                // Pass 1 — resolve args without a hint so their natural types drive
+                // overload resolution.  e.g. `foo(x)` where `x: i64` must select
+                // `foo(i64)` not `foo(i32)`.
+                let mut resolved_args = Vec::with_capacity(args.len());
                 let mut errors = Vec::new();
                 for arg in args {
-                    match self.resolve_expression(path, arg, in_comptime) {
-                        Ok(res) => new_args.push(res),
+                    match self.resolve_expression(path, arg, in_comptime, None) {
+                        Ok(res) => resolved_args.push(res),
                         Err(e) => errors.push(e),
                     }
                 }
                 if !errors.is_empty() {
-                    return Err(ResolverError::Many(errors))
+                    return Err(ResolverError::Many(errors));
                 }
-                let args = new_args;
 
-                let action = if in_comptime {
-                    Self::resolve_comptime_item
+                // Resolve the function path using the arg types so overloading works.
+                // Collect arg types from the already-resolved arguments so the scorer
+                // can pick the right overload when multiple candidates are in scope.
+                let resolved_arg_types: Vec<TypeInfo> = resolved_args.iter()
+                    .filter_map(Self::get_expression_type)
+                    .collect();
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(&name, &resolved_arg_types)
                 } else {
-                    Self::resolve_item
+                    self.resolve_item_with_args(&name, &resolved_arg_types)
                 };
-
-                let resolved_path = action(self, &name);
-
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type and function type
+                // Pass 2 — re-coerce bare numeric literals whose type the selected
+                // overload constrains more precisely.  e.g. `foo_u8(42)` should give
+                // the literal type U8, not the default I32.
+                let param_types: Vec<TypeInfo> = self.function_signatures
+                    .get(&resolved_path)
+                    .map(|sig| sig.argument_types.clone())
+                    .unwrap_or_default();
+                let args: Vec<_> = resolved_args.into_iter().enumerate().map(|(i, arg)| {
+                    if let Some(hint) = param_types.get(i) {
+                        Self::recoerce_number_literal(arg, hint, span)
+                    } else {
+                        arg
+                    }
+                }).collect();
+
+                // Build return/function types, substituting any generics.
                 let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
-                    // Collect argument types
                     let arg_types: Vec<_> = args.iter()
-                        .map(|e| Self::get_expression_type(e))
-                        .collect::<Option<Vec<_>>>()
-                        .unwrap_or_default();
-                    // Try to match generics
+                        .filter_map(Self::get_expression_type)
+                        .collect();
                     let generics = Self::match_generics(&sig.argument_types, &arg_types);
-                    let (resolved_return, func_type) = if let Some(generics) = generics {
+                    if let Some(generics) = generics {
                         let substituted_return = Self::substitute_generics(&sig.return_type, &generics);
                         let substituted_sig = FunctionSignature {
                             argument_types: sig.argument_types.iter()
@@ -1121,15 +1247,14 @@ impl FunctionResolver {
                         };
                         (
                             Self::typeinfo_to_desugared_type(&substituted_return, span),
-                            Self::signature_to_desugared_type(&substituted_sig, span)
+                            Self::signature_to_desugared_type(&substituted_sig, span),
                         )
                     } else {
                         (
                             Self::typeinfo_to_desugared_type(&sig.return_type, span),
-                            Self::signature_to_desugared_type(&sig, span)
+                            Self::signature_to_desugared_type(sig, span),
                         )
-                    };
-                    (resolved_return, func_type)
+                    }
                 } else {
                     (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
                 };
@@ -1147,27 +1272,12 @@ impl FunctionResolver {
                 args,
                 span
             } => {
-                let mut new_args = Vec::with_capacity(args.len());
-                let mut errors = Vec::new();
-                for arg in args {
-                    match self.resolve_expression(path, arg, in_comptime) {
-                        Ok(res) => new_args.push(res),
-                        Err(e) => errors.push(e),
-                    }
-                }
-                if !errors.is_empty() {
-                    return Err(ResolverError::Many(errors))
-                }
-                let args = new_args;
-
+                // Determine the operator name from arity (needed before arg resolution
+                // for -negate vs -minus, but arity is known from the parse tree).
                 let name = match operator {
                     parse_tree::Operator::Plus => "+",
                     parse_tree::Operator::Minus => {
-                        if args.len() == 1 {
-                            "-negate"
-                        } else {
-                            "-minus"
-                        }
+                        if args.len() == 1 { "-negate" } else { "-minus" }
                     }
                     parse_tree::Operator::Multiply => "*",
                     parse_tree::Operator::Divide => "/",
@@ -1183,23 +1293,51 @@ impl FunctionResolver {
                     parse_tree::Operator::Not => "!",
                 };
 
-                let action = if in_comptime {
-                    Self::resolve_comptime_item
-                } else {
-                    Self::resolve_item
-                };
+                // Pass 1 — resolve args first so their natural types drive overload
+                // selection (e.g. `std::i32::+` vs `std::i64::+`).
+                let mut resolved_args = Vec::with_capacity(args.len());
+                let mut errors = Vec::new();
+                for arg in args {
+                    match self.resolve_expression(path, arg, in_comptime, None) {
+                        Ok(res) => resolved_args.push(res),
+                        Err(e) => errors.push(e),
+                    }
+                }
+                if !errors.is_empty() {
+                    return Err(ResolverError::Many(errors));
+                }
 
-                let resolved_path = action(self, name);
+                // Resolve the operator path using arg types for overload selection.
+                let resolved_arg_types: Vec<TypeInfo> = resolved_args.iter()
+                    .filter_map(Self::get_expression_type)
+                    .collect();
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(name, &resolved_arg_types)
+                } else {
+                    self.resolve_item_with_args(name, &resolved_arg_types)
+                };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type and function type
+                // Pass 2 — re-coerce bare number literals using the selected signature.
+                let param_types: Vec<TypeInfo> = self.function_signatures
+                    .get(&resolved_path)
+                    .map(|sig| sig.argument_types.clone())
+                    .unwrap_or_default();
+                let args: Vec<_> = resolved_args.into_iter().enumerate().map(|(i, arg)| {
+                    if let Some(hint) = param_types.get(i) {
+                        Self::recoerce_number_literal(arg, hint, span)
+                    } else {
+                        arg
+                    }
+                }).collect();
+
                 let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
                     (
                         Self::typeinfo_to_desugared_type(&sig.return_type, span),
-                        Self::signature_to_desugared_type(&sig, span)
+                        Self::signature_to_desugared_type(sig, span),
                     )
                 } else {
                     (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
@@ -1214,23 +1352,40 @@ impl FunctionResolver {
                 }
             }
             parse_tree::Expression::BinOp { lhs, rhs, op, span } => {
-                let lhs_res = self.resolve_expression(path, *lhs, in_comptime);
-                let rhs_res = self.resolve_expression(path, *rhs, in_comptime);
+                // Resolve both sides without hints first so their natural types are known.
+                let lhs_res = self.resolve_expression(path, *lhs, in_comptime, None);
+                let rhs_res = self.resolve_expression(path, *rhs, in_comptime, None);
 
-                let (lhs, rhs) = match (lhs_res, rhs_res) {
+                let (mut lhs, mut rhs) = match (lhs_res, rhs_res) {
                     (Ok(lhs), Ok(rhs)) => (lhs, rhs),
-                    (Err(err), Ok(_)) => {
-                        return Err(err);
-                    }
-                    (Ok(_), Err(err)) => {
-                        return Err(err);
-                    }
-                    (Err(err1), Err(err2)) => {
-                        return Err(ResolverError::Many(vec![err1, err2]))
-                    }
+                    (Err(err), Ok(_)) => return Err(err),
+                    (Ok(_), Err(err)) => return Err(err),
+                    (Err(err1), Err(err2)) => return Err(ResolverError::Many(vec![err1, err2])),
                 };
 
-                // Get the types of the arguments for overload resolution
+                // Cross-coerce: if one side has a concrete numeric type and the other
+                // is a bare literal that defaulted (I32 or F64), fix the literal so
+                // both sides agree.  This is what makes `x + 5` correct when `x: i64`
+                // — without this the wasm backend sees [i64, i32].
+                {
+                    let lhs_type = Self::get_expression_type(&lhs);
+                    let rhs_type = Self::get_expression_type(&rhs);
+                    if let (Some(lt), Some(rt)) = (&lhs_type, &rhs_type) {
+                        if lt.is_numeric() && rt.is_numeric() && lt != rt {
+                            // I32 and F64 are the "no hint" fallbacks from infer_number_type.
+                            // If one side is a non-default type, use it to fix the other.
+                            let default_int   = TypeInfo::I32;
+                            let default_float = TypeInfo::F64;
+                            if rt == &default_int || rt == &default_float {
+                                rhs = Self::recoerce_number_literal(rhs, lt, span);
+                            } else if lt == &default_int || lt == &default_float {
+                                lhs = Self::recoerce_number_literal(lhs, rt, span);
+                            }
+                        }
+                    }
+                }
+
+                // Re-read types after potential recoercion for overload resolution.
                 let lhs_type = Self::get_expression_type(&lhs);
                 let rhs_type = Self::get_expression_type(&rhs);
 
@@ -1259,24 +1414,12 @@ impl FunctionResolver {
                     .collect::<Option<Vec<_>>>()
                     .unwrap_or_default();
 
-                // Try to resolve with types first, fall back to untyped
-                let resolved_path = if arg_types.len() == 2 {
-                    self.resolve_function_with_types(name, &arg_types)
-                        .or_else(|| {
-                            let action = if in_comptime {
-                                Self::resolve_comptime_item
-                            } else {
-                                Self::resolve_item
-                            };
-                            action(self, name)
-                        })
+                // Resolve with arg types for overload selection.
+                let arg_types_slice: &[TypeInfo] = if arg_types.len() == 2 { &arg_types } else { &[] };
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(name, arg_types_slice)
                 } else {
-                    let action = if in_comptime {
-                        Self::resolve_comptime_item
-                    } else {
-                        Self::resolve_item
-                    };
-                    action(self, name)
+                    self.resolve_item_with_args(name, arg_types_slice)
                 };
 
                 let Some(resolved_path) = resolved_path else {
@@ -1302,7 +1445,7 @@ impl FunctionResolver {
                 }
             }
             parse_tree::Expression::Not { value, span } => {
-                let value = self.resolve_expression(path, *value, in_comptime)?;
+                let value = self.resolve_expression(path, *value, in_comptime, None)?;
                 let value_type = Self::get_expression_type(&value);
                 let args = vec![value];
 
@@ -1311,35 +1454,20 @@ impl FunctionResolver {
                 // Build the argument types for overload resolution
                 let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                // Try to resolve with types first, fall back to untyped
-                let resolved_path = if !arg_types.is_empty() {
-                    self.resolve_function_with_types(name, &arg_types)
-                        .or_else(|| {
-                            let action = if in_comptime {
-                                Self::resolve_comptime_item
-                            } else {
-                                Self::resolve_item
-                            };
-                            action(self, name)
-                        })
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(name, &arg_types)
                 } else {
-                    let action = if in_comptime {
-                        Self::resolve_comptime_item
-                    } else {
-                        Self::resolve_item
-                    };
-                    action(self, name)
+                    self.resolve_item_with_args(name, &arg_types)
                 };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type and function type
                 let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
                     (
                         Self::typeinfo_to_desugared_type(&sig.return_type, span),
-                        Self::signature_to_desugared_type(&sig, span)
+                        Self::signature_to_desugared_type(&sig, span),
                     )
                 } else {
                     (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
@@ -1354,7 +1482,7 @@ impl FunctionResolver {
                 }
             }
             parse_tree::Expression::Negation { value, span } => {
-                let value = self.resolve_expression(path, *value, in_comptime)?;
+                let value = self.resolve_expression(path, *value, in_comptime, None)?;
                 let value_type = Self::get_expression_type(&value);
                 let args = vec![value];
 
@@ -1363,34 +1491,20 @@ impl FunctionResolver {
                 // Build the argument types for overload resolution
                 let arg_types: Vec<TypeInfo> = value_type.into_iter().collect();
 
-                let resolved_path = if !arg_types.is_empty() {
-                    self.resolve_function_with_types(name, &arg_types)
-                        .or_else(|| {
-                            let action = if in_comptime {
-                                Self::resolve_comptime_item
-                            } else {
-                                Self::resolve_item
-                            };
-                            action(self, name)
-                        })
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(name, &arg_types)
                 } else {
-                    let action = if in_comptime {
-                        Self::resolve_comptime_item
-                    } else {
-                        Self::resolve_item
-                    };
-                    action(self, name)
+                    self.resolve_item_with_args(name, &arg_types)
                 };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(name.to_string(), path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type and function type
                 let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
                     (
                         Self::typeinfo_to_desugared_type(&sig.return_type, span),
-                        Self::signature_to_desugared_type(&sig, span)
+                        Self::signature_to_desugared_type(&sig, span),
                     )
                 } else {
                     (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
@@ -1407,21 +1521,8 @@ impl FunctionResolver {
             parse_tree::Expression::IfExpression(if_expr) => desugared_tree::Expression::IfExpression(self.resolve_if_expression(path, if_expr, in_comptime)?),
 
             parse_tree::Expression::DottedFunctionCall { base, name, args, span } => {
-                // Resolve arguments first
-                let mut new_args = Vec::with_capacity(args.len());
-                let mut errors = Vec::new();
-                for arg in args {
-                    match self.resolve_expression(path, arg, in_comptime) {
-                        Ok(res) => new_args.push(res),
-                        Err(e) => errors.push(e),
-                    }
-                }
-                if !errors.is_empty() {
-                    return Err(ResolverError::Many(errors))
-                }
-                let args = new_args;
-
-                // Determine the base string for the module path
+                // Determine the base string for the module path first so we can look up
+                // the resolved path (and thus parameter types) before resolving args.
                 fn expr_to_base_str(expr: &parse_tree::Expression<'_>) -> Option<String> {
                     match expr {
                         parse_tree::Expression::Variable { name, .. } => Some(name.to_string()),
@@ -1447,19 +1548,50 @@ impl FunctionResolver {
                 // Build the full item string like "module::item"
                 let full_item = format!("{}::{}", base_str, name.to_string());
 
-                let action = if in_comptime { Self::resolve_comptime_item } else { Self::resolve_item };
+                // Pass 1 — resolve args first so their types drive overload selection.
+                let mut resolved_args = Vec::with_capacity(args.len());
+                let mut errors = Vec::new();
+                for arg in args {
+                    match self.resolve_expression(path, arg, in_comptime, None) {
+                        Ok(res) => resolved_args.push(res),
+                        Err(e) => errors.push(e),
+                    }
+                }
+                if !errors.is_empty() {
+                    return Err(ResolverError::Many(errors));
+                }
 
-                let resolved_path = action(self, &full_item);
+                // Resolve the path now that we have concrete arg types.
+                let resolved_arg_types: Vec<TypeInfo> = resolved_args.iter()
+                    .filter_map(Self::get_expression_type)
+                    .collect();
+                let resolved_path = if in_comptime {
+                    self.resolve_comptime_item_with_args(&full_item, &resolved_arg_types)
+                } else {
+                    self.resolve_item_with_args(&full_item, &resolved_arg_types)
+                };
 
                 let Some(resolved_path) = resolved_path else {
                     return Err(ResolverError::UnknownFunction(full_item, path.clone(), span))
                 };
 
-                // Look up the function signature to get the return type and function type
+                // Pass 2 — re-coerce bare number literals using the selected signature.
+                let param_types: Vec<TypeInfo> = self.function_signatures
+                    .get(&resolved_path)
+                    .map(|sig| sig.argument_types.clone())
+                    .unwrap_or_default();
+                let args: Vec<_> = resolved_args.into_iter().enumerate().map(|(i, arg)| {
+                    if let Some(hint) = param_types.get(i) {
+                        Self::recoerce_number_literal(arg, hint, span)
+                    } else {
+                        arg
+                    }
+                }).collect();
+
                 let (return_type, function_type) = if let Some(sig) = self.function_signatures.get(&resolved_path) {
                     (
                         Self::typeinfo_to_desugared_type(&sig.return_type, span),
-                        Self::signature_to_desugared_type(&sig, span)
+                        Self::signature_to_desugared_type(sig, span),
                     )
                 } else {
                     (desugared_tree::Type::Unit(span), desugared_tree::Type::Unit(span))
@@ -1487,7 +1619,7 @@ impl FunctionResolver {
         } = if_expr;
         let mut errors = Vec::new();
 
-        let condition = match self.resolve_expression(path, *condition, in_comptime) {
+        let condition = match self.resolve_expression(path, *condition, in_comptime, None) {
             Ok(res) => res,
             Err(err) => {
                 errors.push(err);
@@ -1505,7 +1637,7 @@ impl FunctionResolver {
 
         let mut new_elifs = Vec::with_capacity(elifs.len());
         for (condition, block) in elifs {
-            let condition = match self.resolve_expression(path, condition, in_comptime) {
+            let condition = match self.resolve_expression(path, condition, in_comptime, None) {
                 Ok(res) => res,
                 Err(err) => {
                     errors.push(err);
@@ -1733,5 +1865,97 @@ mod tests {
 
         let resolved = resolver.resolve_item("malloc");
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn number_inference_uses_declared_type() {
+        // Integer literal with an explicit type annotation
+        assert_eq!(TypeInfo::U8, FunctionResolver::infer_number_type("42", Some(&TypeInfo::U8)));
+        assert_eq!(TypeInfo::I64, FunctionResolver::infer_number_type("100", Some(&TypeInfo::I64)));
+
+        // Float literal with a float annotation
+        assert_eq!(TypeInfo::F32, FunctionResolver::infer_number_type("3.14", Some(&TypeInfo::F32)));
+
+        // Integer literal with a float annotation (common coercion: `let x: f32 = 0`)
+        assert_eq!(TypeInfo::F32, FunctionResolver::infer_number_type("0", Some(&TypeInfo::F32)));
+
+        // No hint falls back to defaults
+        assert_eq!(TypeInfo::I32, FunctionResolver::infer_number_type("7", None));
+        assert_eq!(TypeInfo::F64, FunctionResolver::infer_number_type("7.0", None));
+
+        // Non-numeric hint is ignored, falls back to defaults
+        assert_eq!(TypeInfo::I32, FunctionResolver::infer_number_type("7", Some(&TypeInfo::String)));
+    }
+
+    #[test]
+    fn ambiguous_name_resolved_by_arg_types() {
+        let mut resolver = FunctionResolver::new();
+
+        // Two modules both export a function called "add" with different signatures.
+        let mut mod_i32 = FileDefinitions::new();
+        mod_i32.insert_export(vec!["math_i32".to_string(), "add".to_string()]);
+        resolver.files.insert(vec!["math_i32".to_string()], mod_i32);
+        resolver.function_signatures.insert(
+            vec!["math_i32".to_string(), "add".to_string()],
+            FunctionSignature { argument_types: vec![TypeInfo::I32, TypeInfo::I32], return_type: TypeInfo::I32 },
+        );
+
+        let mut mod_i64 = FileDefinitions::new();
+        mod_i64.insert_export(vec!["math_i64".to_string(), "add".to_string()]);
+        resolver.files.insert(vec!["math_i64".to_string()], mod_i64);
+        resolver.function_signatures.insert(
+            vec!["math_i64".to_string(), "add".to_string()],
+            FunctionSignature { argument_types: vec![TypeInfo::I64, TypeInfo::I64], return_type: TypeInfo::I64 },
+        );
+
+        // Both modules are imported.
+        resolver.add_current_path(vec!["math_i32".to_string()]);
+        resolver.add_current_path(vec!["math_i64".to_string()]);
+        resolver.set_current_module(vec!["mymodule".to_string()]);
+
+        // With I64 arg types the i64 overload should win.
+        let resolved = resolver.resolve_item_with_args("add", &[TypeInfo::I64, TypeInfo::I64]);
+        assert_eq!(resolved, Some(vec!["math_i64".to_string(), "add".to_string()]));
+
+        // With I32 arg types the i32 overload should win.
+        let resolved = resolver.resolve_item_with_args("add", &[TypeInfo::I32, TypeInfo::I32]);
+        assert_eq!(resolved, Some(vec!["math_i32".to_string(), "add".to_string()]));
+
+        // With no type info, some candidate is returned (non-deterministic but non-None).
+        let resolved = resolver.resolve_item_with_args("add", &[]);
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn binop_literal_cross_coercion() {
+        // recoerce_number_literal should lift a default-typed literal to match a
+        // concrete type discovered from the other operand.
+        let span = Span::new(0, 0); // adjust if your Span type differs
+
+        // I64 variable + bare `5` (defaults to I32) → both should become I64
+        let lit_i32 = desugared_tree::Expression::ConstantNumber {
+            value: std::borrow::Cow::Borrowed("5"),
+            r#type: FunctionResolver::typeinfo_to_desugared_type(&TypeInfo::I32, span),
+            span,
+        };
+        let result = FunctionResolver::recoerce_number_literal(lit_i32, &TypeInfo::I64, span);
+        assert_eq!(
+            FunctionResolver::get_expression_type(&result),
+            Some(TypeInfo::I64),
+            "literal should be recoerced from I32 to I64"
+        );
+
+        // A non-literal (variable) must not be changed.
+        let var_expr = desugared_tree::Expression::Variable {
+            name: std::borrow::Cow::Borrowed("x"),
+            r#type: FunctionResolver::typeinfo_to_desugared_type(&TypeInfo::I64, span),
+            span,
+        };
+        let unchanged = FunctionResolver::recoerce_number_literal(var_expr, &TypeInfo::U8, span);
+        assert_eq!(
+            FunctionResolver::get_expression_type(&unchanged),
+            Some(TypeInfo::I64),
+            "non-literal should be unchanged by recoerce"
+        );
     }
 }

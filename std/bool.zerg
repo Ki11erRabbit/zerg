@@ -23,24 +23,27 @@ pub fun (!)(x: bool): bool {
     } else {
         return true;
     };
+    return false;
 }
 
 pub inline fun (||)(x: bool, lazy y: bool): bool {
-    if x {
-        return true;
+    return (if x {
+        true;
     } elif y {
-        return true;
-    };
-    return false;
+        true;
+    } else {
+        false;
+    });
 }
 
 pub inline fun (&&)(x: bool, lazy y: bool): bool {
-    if x {
+    return (if x {
         if y {
-            return true;
+            true;
         } else {
-            return false;
+            false;
         };
-    };
-    return false;
+    } else {
+        false;
+    });
 }
