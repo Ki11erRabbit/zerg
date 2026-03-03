@@ -13,3 +13,13 @@ Using compile time execution, we can make the code generation part of a language
 Right now Zerg only targets WASI WASM for its simple stack-based virtual machine. 
 In the future it would be great to support actual hardware like x86 and Arm but register machines are notoriously hard to compile for.
 The goal is to research compile time execution, not implement a register allocation algorithm.
+
+## How to use
+First, have the Rust toolchain installed.
+
+Then run `cargo build --release` to build a release build of the compiler.
+
+To run the compiler `./target/release/zergc <file name>` to run the compiler on that file.
+Imports will be automatically looked up following the path structure.
+
+To import the use the standard library, use `-s` and the path to the standard library.
