@@ -455,6 +455,9 @@ impl<'input> Interpreter {
                     "f64.ge" => {
                         function.instruction(&Instruction::F64Ge);
                     }
+                    "return" => {
+                        function.instruction(&Instruction::Return);
+                    }
                     value => todo!("put instruction: {}", value),
                 }
             }

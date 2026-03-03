@@ -38,6 +38,8 @@ pub inline fun (&&)(x: bool, lazy y: bool): bool {
     if x {
         if y {
             return true;
+        } else {
+            return false;
         };
     };
     return false;
