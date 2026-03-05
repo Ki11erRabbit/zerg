@@ -18,12 +18,11 @@ pub fun (!=)(x: bool, y: bool): bool {
 }
 
 pub fun (!)(x: bool): bool {
-    if x {
-        return false;
+    return (if x {
+        false;
     } else {
-        return true;
-    };
-    return false;
+        true;
+    });
 }
 
 pub inline fun (||)(x: bool, lazy y: bool): bool {
