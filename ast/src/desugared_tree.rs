@@ -3,41 +3,41 @@ use std::path::PathBuf;
 use crate::{OwnedPath, Span};
 
 #[derive(Debug, Clone)]
-pub struct File<'input> {
+pub struct File {
     pub file_path: PathBuf,
-    pub functions: Vec<Function<'input>>,
-    pub externals: Vec<Extern<'input>>,
+    pub functions: Vec<Function>,
+    pub externals: Vec<Extern>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Extern<'input> {
-    pub library: Cow<'input, str>,
-    pub functions: Vec<Function<'input>>,
+pub struct Extern {
+    pub library: String,
+    pub functions: Vec<Function>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Function<'input> {
+pub struct Function {
     pub public: bool,
     pub comptime: bool,
     pub inline: bool,
     pub path: OwnedPath,
-    pub type_args: Vec<Cow<'input, str>>,
-    pub arguments: FunctionArguments<'input>,
-    pub return_type: Type<'input>,
-    pub body: Block<'input>,
+    pub type_args: Vec<String>,
+    pub arguments: FunctionArguments,
+    pub return_type: Type,
+    pub body: Block,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionArguments<'input> {
-    pub arguments: Vec<FunctionArgument<'input>>,
+pub struct FunctionArguments {
+    pub arguments: Vec<FunctionArgument>,
     pub span: Span,
 }
 
-impl<'input> FunctionArguments<'input> {
-    pub fn iter(&self) -> impl Iterator<Item = &FunctionArgument<'input>> {
+impl FunctionArguments {
+    pub fn iter(&self) -> impl Iterator<Item = &FunctionArgument> {
         self.arguments.iter()
     }
     
@@ -47,15 +47,15 @@ impl<'input> FunctionArguments<'input> {
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionArgument<'input> {
+pub struct FunctionArgument {
     pub lazy: bool,
-    pub name: Cow<'input, str>,
-    pub r#type: Type<'input>,
+    pub name: String,
+    pub r#type: Type,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum Type<'input> {
+pub enum Type {
     U8(Span),
     I8(Span),
     U16(Span),
@@ -70,72 +70,72 @@ pub enum Type<'input> {
     String(Span),
     Unit(Span),
     Generic {
-        name: Cow<'input, str>,
-        args: Vec<Type<'input>>,
+        name: String,
+        args: Vec<Type>,
         span: Span,
     },
     Custom {
-        name: Cow<'input, str>,
+        name: String,
         span: Span,
     },
     Function {
-        args: Vec<Type<'input>>,
-        r#return: Box<Type<'input>>,
+        args: Vec<Type>,
+        r#return: Box<Type>,
         span: Span,
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<'input> {
-    pub statements: Vec<Statement<'input>>,
+pub struct Block {
+    pub statements: Vec<Statement>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum Statement<'input> {
+pub enum Statement {
     Let {
-        name: Cow<'input, str>,
-        r#type: Type<'input>,
-        expr: Expression<'input>,
+        name: String,
+        r#type: Type,
+        expr: Expression,
         span: Span,
     },
     Assignment {
-        target: Expression<'input>,
-        expr: Expression<'input>,
+        target: Expression,
+        expr: Expression,
         span: Span,
     },
     Expression {
-        expr: Expression<'input>,
+        expr: Expression,
         span: Span,
     },
     Comptime {
-        block: Block<'input>,
+        block: Block,
         span: Span,
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum Expression<'input> {
+pub enum Expression {
     Return {
-        value: Option<Box<Expression<'input>>>,
+        value: Option<Box<Expression>>,
         span: Span,
     },
     Parenthesized {
-        expr: Box<Expression<'input>>,
+        expr: Box<Expression>,
         span: Span,
     },
     Variable {
-        name: Cow<'input, str>,
-        r#type: Type<'input>,
+        name: String,
+        r#type: Type,
         span: Span,
     },
     ConstantNumber {
-        value: Cow<'input, str>,
-        r#type: Type<'input>,
+        value: String,
+        r#type: Type,
         span: Span,
     },
     ConstantString {
-        value: Cow<'input, str>,
+        value: String,
         span: Span,
     },
     ConstantBool {
@@ -144,31 +144,31 @@ pub enum Expression<'input> {
     },
     FunctionCall {
         name: OwnedPath,
-        args: Vec<Expression<'input>>,
-        return_type: Type<'input>,
-        function_type: Type<'input>,
+        args: Vec<Expression>,
+        return_type: Type,
+        function_type: Type,
         span: Span,
     },
-    IfExpression(IfExpression<'input>),
+    IfExpression(IfExpression),
 }
 
 #[derive(Debug, Clone)]
-pub struct IfExpression<'input> {
-    pub condition: Box<Expression<'input>>,
-    pub then_block: Block<'input>,
-    pub elifs: Vec<(Expression<'input>, Block<'input>)>,
-    pub else_block: Option<Block<'input>>,
-    pub return_type: Type<'input>,
+pub struct IfExpression {
+    pub condition: Box<Expression>,
+    pub then_block: Block,
+    pub elifs: Vec<(Expression, Block)>,
+    pub else_block: Option<Block>,
+    pub return_type: Type,
     pub span: Span,
 }
 
-impl<'input> IfExpression<'input> {
+impl IfExpression {
     pub fn new(
-        condition: Box<Expression<'input>>,
-        then_block: Block<'input>,
-        elifs: Vec<(Expression<'input>, Block<'input>)>,
-        else_block: Option<Block<'input>>,
-        return_type: Type<'input>,
+        condition: Box<Expression>,
+        then_block: Block,
+        elifs: Vec<(Expression, Block)>,
+        else_block: Option<Block>,
+        return_type: Type,
         span: Span,
     ) -> Self {
         IfExpression { condition, then_block, elifs, else_block, return_type, span }

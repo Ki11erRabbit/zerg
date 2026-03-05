@@ -96,7 +96,7 @@ impl From<Vec<String>> for OwnedPath {
 
 pub use function_resolver::ResolverError;
 
-pub fn desugar_and_typecheck<'input>(files: Vec<(PathBuf, parse_tree::File<'input>)>) -> Result<Vec<desugared_tree::File<'input>>, ResolverError> {
+pub fn desugar_and_typecheck<'input>(files: Vec<(PathBuf, parse_tree::File<'input>)>) -> Result<Vec<desugared_tree::File>, ResolverError> {
     let files: Vec<(PathBuf, parse_tree::File<'input>)> = files.into_iter()
         .map(|(path, file)| (path, desugarer::desugar(file)))
         .collect();

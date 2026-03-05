@@ -369,10 +369,10 @@ impl FunctionResolver {
     /// their natural types can drive overload selection), then this function fixes up
     /// any literals whose type the chosen signature constrains more precisely.
     fn recoerce_number_literal<'input>(
-        expr: desugared_tree::Expression<'input>,
+        expr: desugared_tree::Expression,
         hint: &TypeInfo,
         span: Span,
-    ) -> desugared_tree::Expression<'input> {
+    ) -> desugared_tree::Expression {
         match expr {
             desugared_tree::Expression::ConstantNumber { value, .. } => {
                 let better_type = Self::infer_number_type(&value, Some(hint));
@@ -456,9 +456,7 @@ impl FunctionResolver {
         }
     }
 
-    fn typeinfo_to_desugared_type(info: &TypeInfo, span: Span) -> desugared_tree::Type<'static> {
-        use std::borrow::Cow;
-
+    fn typeinfo_to_desugared_type(info: &TypeInfo, span: Span) -> desugared_tree::Type {
         match info {
             TypeInfo::U8 => desugared_tree::Type::U8(span),
             TypeInfo::I8 => desugared_tree::Type::I8(span),
@@ -474,7 +472,7 @@ impl FunctionResolver {
             TypeInfo::String => desugared_tree::Type::String(span),
             TypeInfo::Unit => desugared_tree::Type::Unit(span),
             TypeInfo::Custom { name } => desugared_tree::Type::Custom {
-                name: Cow::Owned(name.clone()),
+                name: name.clone(),
                 span,
             },
             TypeInfo::Generic { name, args } => {
@@ -482,7 +480,7 @@ impl FunctionResolver {
                     .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
                     .collect();
                 desugared_tree::Type::Generic {
-                    name: Cow::Owned(name.clone()),
+                    name: name.clone(),
                     args: desugared_args,
                     span,
                 }
@@ -501,7 +499,7 @@ impl FunctionResolver {
         }
     }
 
-    fn signature_to_desugared_type(sig: &FunctionSignature, span: Span) -> desugared_tree::Type<'static> {
+    fn signature_to_desugared_type(sig: &FunctionSignature, span: Span) -> desugared_tree::Type {
         let args = sig.argument_types.iter()
             .map(|arg| Self::typeinfo_to_desugared_type(arg, span))
             .collect();
@@ -915,7 +913,7 @@ impl FunctionResolver {
         self.files.insert(segments, file_def);
     }
 
-    pub fn resolve<'input>(&mut self, files: Vec<(PathBuf, parse_tree::File<'input>)>) -> ResolverResult<Vec<desugared_tree::File<'input>>> {
+    pub fn resolve<'input>(&mut self, files: Vec<(PathBuf, parse_tree::File<'input>)>) -> ResolverResult<Vec<desugared_tree::File>> {
         for pair in &files {
             self.load_file(pair);
         }
@@ -937,7 +935,7 @@ impl FunctionResolver {
         Ok(resolved_files)
     }
 
-    fn resolve_file<'input>(&mut self, path: PathBuf, file: parse_tree::File<'input>) -> ResolverResult<desugared_tree::File<'input>> {
+    fn resolve_file<'input>(&mut self, path: PathBuf, file: parse_tree::File<'input>) -> ResolverResult<desugared_tree::File> {
         let segments: Vec<String> = Self::generate_segments(&path);
         self.set_current_module(segments.clone());
 
@@ -986,7 +984,7 @@ impl FunctionResolver {
                 desugared_funcs.push(self.resolve_function(&path, function)?);
             }
             new_externs.push(desugared_tree::Extern {
-                library: r#extern.library.clone(),
+                library: r#extern.library.to_string(),
                 functions: desugared_funcs,
                 span: r#extern.span,
             });
@@ -1000,7 +998,7 @@ impl FunctionResolver {
         })
     }
 
-    fn resolve_function<'input>(&mut self, path: &PathBuf, function: parse_tree::Function<'input>) -> ResolverResult<desugared_tree::Function<'input>> {
+    fn resolve_function<'input>(&mut self, path: &PathBuf, function: parse_tree::Function<'input>) -> ResolverResult<desugared_tree::Function> {
         let parse_tree::Function {
             public,
             comptime,
@@ -1012,6 +1010,8 @@ impl FunctionResolver {
             body,
             span
         } = function;
+
+        let type_args = type_args.into_iter().map(|x| x.to_string()).collect();
 
         // Push a scope for function arguments so they are visible inside the body.
         self.push_scope();
@@ -1072,7 +1072,7 @@ impl FunctionResolver {
         })
     }
 
-    fn resolve_block<'input>(&mut self, path: &PathBuf, block: parse_tree::Block<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Block<'input>> {
+    fn resolve_block<'input>(&mut self, path: &PathBuf, block: parse_tree::Block<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Block> {
         let parse_tree::Block { statements, span } = block;
 
         // Push a new scope for this block
@@ -1100,7 +1100,7 @@ impl FunctionResolver {
         Err(ResolverError::Many(errors))
     }
 
-    fn resolve_statement<'input>(&mut self, path: &PathBuf, statement: parse_tree::Statement<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Statement<'input>> {
+    fn resolve_statement<'input>(&mut self, path: &PathBuf, statement: parse_tree::Statement<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::Statement> {
         let statement = match statement {
             parse_tree::Statement::Let { name, r#type, expr, span } => {
                 let r#type = Self::translate_type(r#type);
@@ -1116,7 +1116,7 @@ impl FunctionResolver {
                     self.add_variable(name.to_string(), type_info, in_comptime);
                 }
 
-                desugared_tree::Statement::Let { name, r#type, expr, span }
+                desugared_tree::Statement::Let { name: name.to_string(), r#type, expr, span }
             }
             parse_tree::Statement::Assignment { target, expr, span } => {
                 // For assignments, use the type of the target variable as the hint.
@@ -1150,7 +1150,7 @@ impl FunctionResolver {
         // Contextual type hint propagated from the surrounding declaration or call site.
         // Used to pick the right concrete type for bare numeric literals.
         expected_type: Option<&TypeInfo>,
-    ) -> ResolverResult<desugared_tree::Expression<'input>> {
+    ) -> ResolverResult<desugared_tree::Expression> {
         let expr = match expr {
             parse_tree::Expression::Return { value, span } => {
                 let value = if let Some(value) = value {
@@ -1170,17 +1170,17 @@ impl FunctionResolver {
                 let r#type = self.lookup_variable(&name, in_comptime)
                     .map(|ti| Self::typeinfo_to_desugared_type(&ti, span))
                     .unwrap_or_else(|| desugared_tree::Type::Unit(span));
-                desugared_tree::Expression::Variable { name, r#type, span }
+                desugared_tree::Expression::Variable { name: name.to_string(), r#type, span }
             }
             parse_tree::Expression::ConstantNumber { value, span } => {
                 // Use the contextual hint when available so that, e.g., `let x: u8 = 5`
                 // resolves the literal `5` as U8 rather than the default I32.
                 let inferred_type = Self::infer_number_type(&value, expected_type);
                 let r#type = Self::typeinfo_to_desugared_type(&inferred_type, span);
-                desugared_tree::Expression::ConstantNumber { value, r#type, span }
+                desugared_tree::Expression::ConstantNumber { value: value.to_string(), r#type, span }
             }
             parse_tree::Expression::ConstantString { value, span } => {
-                desugared_tree::Expression::ConstantString { value, span }
+                desugared_tree::Expression::ConstantString { value: value.to_string(), span }
             }
             parse_tree::Expression::ConstantBool { value, span } => {
                 desugared_tree::Expression::ConstantBool { value, span }
@@ -1609,7 +1609,7 @@ impl FunctionResolver {
         Ok(expr)
     }
 
-    fn resolve_if_expression<'input>(&mut self, path: &PathBuf, if_expr: parse_tree::IfExpression<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::IfExpression<'input>> {
+    fn resolve_if_expression<'input>(&mut self, path: &PathBuf, if_expr: parse_tree::IfExpression<'input>, in_comptime: bool) -> ResolverResult<desugared_tree::IfExpression> {
         let parse_tree::IfExpression {
             condition,
             then_block,
@@ -1740,7 +1740,7 @@ impl FunctionResolver {
 
                 desugared_tree::FunctionArgument {
                     lazy,
-                    name,
+                    name: name.to_string(),
                     r#type: Self::translate_type(r#type),
                     span
                 }
@@ -1768,10 +1768,10 @@ impl FunctionResolver {
             parse_tree::Type::Bool(span) => desugared_tree::Type::Bool(span),
             parse_tree::Type::String(span) => desugared_tree::Type::String(span),
             parse_tree::Type::Unit(span) => desugared_tree::Type::Unit(span),
-            parse_tree::Type::Custom { name, span } => desugared_tree::Type::Custom { name, span},
+            parse_tree::Type::Custom { name, span } => desugared_tree::Type::Custom { name: name.to_string(), span},
             parse_tree::Type::Generic { name, args, span} => {
                 let args = args.into_iter().map(Self::translate_type).collect::<Vec<_>>();
-                desugared_tree::Type::Generic { name, args, span }
+                desugared_tree::Type::Generic { name: name.to_string(), args, span }
             }
             parse_tree::Type::Function { args, r#return, span } => {
                 let args = args.into_iter().map(Self::translate_type).collect();
@@ -1934,7 +1934,7 @@ mod tests {
 
         // I64 variable + bare `5` (defaults to I32) → both should become I64
         let lit_i32 = desugared_tree::Expression::ConstantNumber {
-            value: std::borrow::Cow::Borrowed("5"),
+            value: String::from("5"),
             r#type: FunctionResolver::typeinfo_to_desugared_type(&TypeInfo::I32, span),
             span,
         };
@@ -1947,7 +1947,7 @@ mod tests {
 
         // A non-literal (variable) must not be changed.
         let var_expr = desugared_tree::Expression::Variable {
-            name: std::borrow::Cow::Borrowed("x"),
+            name: String::from("x"),
             r#type: FunctionResolver::typeinfo_to_desugared_type(&TypeInfo::I64, span),
             span,
         };

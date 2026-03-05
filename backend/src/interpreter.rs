@@ -33,7 +33,7 @@ pub struct Interpreter {
     internal_functions: HashMap<Vec<String>, InternalFunction>
 }
 
-impl<'input> Interpreter {
+impl Interpreter {
     pub fn new() -> Self {
         let mut internal_functions = HashMap::new();
         internal_functions.insert(vec![String::from("compiler"), String::from("put_instruction")], InternalFunction::PutInstruction);
@@ -73,9 +73,9 @@ impl<'input> Interpreter {
 
     pub fn interpret_comptime_block(
         &mut self,
-        compiler: &Compiler<'input>,
+        compiler: &Compiler,
         function: &mut Function,
-        block: Block<'input>,
+        block: Block,
     ) -> Result<(), InterpreterError> {
         let mut out = Value::Unit;
         self.push_state();
@@ -91,9 +91,9 @@ impl<'input> Interpreter {
 
     fn interpret_block(
         &mut self,
-        compiler: &Compiler<'input>,
+        compiler: &Compiler,
         function: &mut Function,
-        block: Block<'input>,
+        block: Block,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         self.push();
@@ -114,9 +114,9 @@ impl<'input> Interpreter {
 
     fn interpret_statement(
         &mut self,
-        compiler: &Compiler<'input>,
+        compiler: &Compiler,
         function: &mut Function,
-        statement: Statement<'input>,
+        statement: Statement,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         match statement {
@@ -146,9 +146,9 @@ impl<'input> Interpreter {
 
     fn interpret_expr(
         &mut self,
-        compiler: &Compiler<'input>,
+        compiler: &Compiler,
         function: &mut Function,
-        expr: Expression<'input>,
+        expr: Expression,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         match expr {
@@ -238,9 +238,9 @@ impl<'input> Interpreter {
     
     fn interpret_function(
         &mut self,
-        compiler: &Compiler<'input>,
+        compiler: &Compiler,
         function: &mut Function,
-        comptime_function: desugared_tree::Function<'input>,
+        comptime_function: desugared_tree::Function,
         parameters: Vec<Value>
     ) -> Result<Value, InterpreterError> {
         let desugared_tree::Function {
@@ -274,7 +274,7 @@ impl<'input> Interpreter {
 
     fn interpret_internal_function(
         &mut self,
-        _compiler: &Compiler<'input>,
+        _compiler: &Compiler,
         function: &mut Function,
         parameters: Vec<Value>,
         internal_function: InternalFunction,

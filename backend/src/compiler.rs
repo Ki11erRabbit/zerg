@@ -70,41 +70,48 @@ impl Type {
     }
 }
 
+#[derive(Clone)]
 pub struct Definition {
     def_index: u32,
     type_index: u32,
     r#type: Type,
+    value: DefinitionValue,
 }
 
 impl Definition {
-    pub fn new(def_index: u32, type_index: u32, r#type: Type) -> Self {
-        Definition { def_index, type_index, r#type }
+    pub fn new(def_index: u32, type_index: u32, r#type: Type, value: DefinitionValue) -> Self {
+        Definition { def_index, type_index, r#type, value }
     }
 }
 
-pub struct ComptimeDefinition<'input> {
-    pub function: desugared_tree::Function<'input>,
+#[derive(Clone)]
+pub enum DefinitionValue {
+    Function(desugared_tree::Function),
 }
 
-impl<'input> ComptimeDefinition<'input> {
-    pub fn new(function: desugared_tree::Function<'input>) -> Self {
+pub struct ComptimeDefinition {
+    pub function: desugared_tree::Function,
+}
+
+impl ComptimeDefinition {
+    pub fn new(function: desugared_tree::Function) -> Self {
         ComptimeDefinition { function }
     }
 }
 
-pub struct ModuleDef<'input> {
+pub struct ModuleDef {
     name: Vec<String>,
     definitions: HashMap<String, Definition>,
-    comptime_definitions: HashMap<String, ComptimeDefinition<'input>>,
+    comptime_definitions: HashMap<String, ComptimeDefinition>,
     /// u32 is the index into the current module's function table
     imports: HashMap<Vec<String>, u32>,
     /// Right now this is just used for extern functions
     re_exports: HashMap<Vec<String>, u32>,
-    file: Option<desugared_tree::File<'input>>,
+    file: Option<desugared_tree::File>,
 }
 
-impl<'input> ModuleDef<'input> {
-    fn new(file: desugared_tree::File<'input>, wasm_module: &mut WasmModuleGroup) -> Self {
+impl ModuleDef {
+    fn new(file: desugared_tree::File, wasm_module: &mut WasmModuleGroup) -> Self {
         let name = file.file_path.iter()
             .map(|s| s.to_string_lossy().to_string())
             .map(|s| if s.contains(".zerg") {
@@ -157,7 +164,7 @@ impl<'input> ModuleDef<'input> {
 
     }
 
-    fn add_function(&mut self, index: u32, function: &desugared_tree::Function<'input>, module: &mut WasmModuleGroup) {
+    fn add_function(&mut self, index: u32, function: &desugared_tree::Function, module: &mut WasmModuleGroup) {
         let desugared_tree::Function {
             comptime,
             arguments,
@@ -194,7 +201,7 @@ impl<'input> ModuleDef<'input> {
 
         let r#type = Type::Function { parameters: type_parameters, return_type: Box::new(local) };
         
-        let def = Definition::new(index, type_index, r#type);
+        let def = Definition::new(index, type_index, r#type, DefinitionValue::Function(function.clone()));
         self.definitions.insert(name, def);
     }
 
@@ -202,7 +209,7 @@ impl<'input> ModuleDef<'input> {
         &mut self,
         library: &str,
         function_index: u32,
-        function: &desugared_tree::Function<'input>,
+        function: &desugared_tree::Function,
         module: &mut WasmModuleGroup,
     ) {
         let desugared_tree::Function {
@@ -238,7 +245,7 @@ impl<'input> ModuleDef<'input> {
 
         let r#type = Type::Function { parameters: type_parameters, return_type: Box::new(local) };
 
-        let def = Definition::new(function_index, type_index, r#type);
+        let def = Definition::new(function_index, type_index, r#type, DefinitionValue::Function(function.clone()));
         self.definitions.insert(name, def);
 
         self.re_exports.insert(path.to_vec_strings(), function_index);
@@ -353,24 +360,26 @@ impl WasmModuleGroup {
     }
 }
 
-pub struct Compiler<'input> {
-    module_to_def: HashMap<Vec<String>, ModuleDef<'input>>,
+pub struct Compiler {
+    module_to_def: HashMap<Vec<String>, ModuleDef>,
     state: FunctionState,
     current_path: Vec<String>,
     main_module: Vec<String>,
+    inlined_vars: HashMap<String, desugared_tree::Expression>
 }
 
-impl<'input> Compiler<'input> {
+impl Compiler {
     pub fn new() -> Self {
         Self {
             module_to_def: HashMap::new(),
             state: FunctionState::new(),
             current_path: Vec::new(),
             main_module: Vec::new(),
+            inlined_vars: HashMap::new()
         }
     }
 
-    pub fn get_module_def(&self, path: &[String]) -> Option<&ModuleDef<'input>> {
+    pub fn get_module_def(&self, path: &[String]) -> Option<&ModuleDef> {
         self.module_to_def.get(path)
     }
 
@@ -387,7 +396,7 @@ impl<'input> Compiler<'input> {
         out
     }
 
-    fn load_files(&mut self, files: Vec<desugared_tree::File<'input>>, wasm_module: &mut WasmModuleGroup) {
+    fn load_files(&mut self, files: Vec<desugared_tree::File>, wasm_module: &mut WasmModuleGroup) {
         let mut modules = Vec::with_capacity(files.len());
         for file in files.clone() {
             let module_path = file.file_path.iter()
@@ -412,7 +421,7 @@ impl<'input> Compiler<'input> {
         }
     }
 
-    pub fn compile_files(&mut self, files: Vec<desugared_tree::File<'input>>) -> Result<(), CompileError> {
+    pub fn compile_files(&mut self, files: Vec<desugared_tree::File>) -> Result<(), CompileError> {
         let mut module = WasmModuleGroup::new();
         self.load_files(files.clone(), &mut module);
 
@@ -443,12 +452,13 @@ impl<'input> Compiler<'input> {
         module.module.section(&module.exports);
         module.module.section(&module.code);
         module.module.section(&module.names);
-        std::fs::write(path_buf.as_path(), module.module.finish()).unwrap();
+        let bytes = module.module.finish();
+        std::fs::write(path_buf.as_path(), bytes).unwrap();
 
         Ok(())
     }
 
-    fn compile_file(&mut self, module: &mut WasmModuleGroup, file: desugared_tree::File<'input>) -> Result<(), CompileError> {
+    fn compile_file(&mut self, module: &mut WasmModuleGroup, file: desugared_tree::File) -> Result<(), CompileError> {
         let desugared_tree::File { functions, file_path, .. } = file;
         let module_path = file_path.iter()
             .map(|s| s.to_string_lossy().to_string())
@@ -496,11 +506,11 @@ impl<'input> Compiler<'input> {
             let ty = convert_type(&arg.r#type).0;
             self.state.store_function_argument(&arg.name, ty, i as u32);
         }
-        self.bind_block(&body);
+        self.bind_block(&body, false);
         let locals = self.state.local_definitions();
         let mut function = Function::new(locals);
 
-        self.compile_block(module, &mut function, body, false)?;
+        self.compile_block(module, &mut function, body, false, false)?;
         function.instruction(&Instruction::End);
 
         self.state.clear();
@@ -517,6 +527,7 @@ impl<'input> Compiler<'input> {
         function: &mut Function,
         block: desugared_tree::Block,
         yield_value: bool,
+        inlining: bool,
     ) -> Result<(), CompileError> {
         let mut errors: Vec<CompileError> = Vec::new();
         let statements_len = block.statements.len();
@@ -528,7 +539,7 @@ impl<'input> Compiler<'input> {
                 false
             };
 
-            match self.compile_statement(module, function, stmt, yield_value) {
+            match self.compile_statement(module, function, stmt, yield_value, inlining) {
                 Ok(_) => {},
                 Err(error) => errors.push(error),
             }
@@ -546,20 +557,26 @@ impl<'input> Compiler<'input> {
         function: &mut Function,
         stmt: desugared_tree::Statement,
         yield_value: bool,
+        inlining: bool,
     ) -> Result<(), CompileError> {
         match stmt {
             desugared_tree::Statement::Let { name, expr, .. } => {
-                self.compile_expr(module, function, expr, true)?;
+                self.compile_expr(module, function, expr, true, inlining)?;
                 let index = self.state.get(&name).unwrap();
                 function.instruction(&Instruction::LocalSet(index));
             }
             desugared_tree::Statement::Expression { expr, .. } => {
-                self.compile_expr(module, function, expr, yield_value)?;
+                self.compile_expr(module, function, expr, yield_value, inlining)?;
             }
             desugared_tree::Statement::Assignment { target, expr, .. } => {
                 match target {
                     desugared_tree::Expression::Variable { name, .. } => {
-                        self.compile_expr(module, function, expr, true)?;
+                        let name = if inlining {
+                            format!("inline<{}>", name)
+                        } else {
+                            name.to_string()
+                        };
+                        self.compile_expr(module, function, expr, true, inlining)?;
                         let index = self.state.get(&name).unwrap();
                         function.instruction(&Instruction::LocalSet(index));
                     }
@@ -581,16 +598,28 @@ impl<'input> Compiler<'input> {
         function: &mut Function,
         expr: desugared_tree::Expression,
         yield_value: bool,
+        inlining: bool,
     ) -> Result<(), CompileError> {
         match expr {
             desugared_tree::Expression::Variable { name, .. } => {
-                if yield_value {
+                if yield_value && !inlining {
                     let index = self.state.get(&name).unwrap();
                     function.instruction(&Instruction::LocalGet(index));
                 }
+                if yield_value && inlining {
+                    let inlined_name = format!("inline<{name}>");
+                    if let Some(index) = self.state.get(&inlined_name) {
+                        function.instruction(&Instruction::LocalGet(index));
+                    } else {
+                        let Some(expr) = self.inlined_vars.remove(&inlined_name) else {
+                            return Ok(())
+                        };
+                        self.compile_expr(module, function, expr, yield_value, false)?;
+                    }
+                }
             }
             desugared_tree::Expression::Parenthesized { expr, .. } => {
-                self.compile_expr(module, function, *expr, yield_value)?;
+                self.compile_expr(module, function, *expr, yield_value, inlining)?;
             }
             desugared_tree::Expression::ConstantNumber { value, r#type, .. } => {
                 if !yield_value {
@@ -635,28 +664,52 @@ impl<'input> Compiler<'input> {
             }
             desugared_tree::Expression::Return { value, .. } => {
                 if let Some(value) = value {
-                    self.compile_expr(module, function, *value, true)?;
-                    function.instruction(&Instruction::Return);
+                    self.compile_expr(module, function, *value, true, inlining)?;
+                    if !inlining {
+                        function.instruction(&Instruction::Return);
+                    }
                 } else {
-                    function.instruction(&Instruction::Return);
+                    if !inlining {
+                        function.instruction(&Instruction::Return);
+                    }
                 }
             }
             desugared_tree::Expression::IfExpression(if_expr) => {
-                self.compile_if_expr(module, function, if_expr, yield_value)?;
+                self.compile_if_expr(module, function, if_expr, yield_value, inlining)?;
             }
             desugared_tree::Expression::FunctionCall { name, args, return_type, .. } => {
-                // TODO: check if function being called is inline, and evaluate body of function instead
-
-                for arg in args {
-                    self.compile_expr(module, function, arg, true)?;
-                }
-
                 let path = name.to_vec_strings();
                 let mut module_path = name.to_vec_strings();
                 let name = module_path.pop().unwrap();
 
+                {
+                    let def = {
+                        let module_def = self.module_to_def.get(&module_path).unwrap();
+                        let def = module_def.get_definition(&name).unwrap();
+                        def
+                    };
+
+                    match def.value.clone() {
+                        DefinitionValue::Function(fun) => {
+                            if fun.inline {
+                                for (arg, expr) in fun.arguments.iter().zip(args.into_iter()) {
+                                    self.inlined_vars.insert(format!("inline<{}>", arg.name), expr);
+                                }
+                                let body = fun.body.clone();
+
+                                return self.compile_block(module, function, body, yield_value, true);
+                            }
+                        }
+                    }
+                }
+
+                for arg in args {
+                    self.compile_expr(module, function, arg, true, false)?;
+                }
+
                 let module_def = self.module_to_def.get(&module_path).unwrap();
                 let def = module_def.get_definition(&name).unwrap();
+
 
                 let index = if let Some(index) = module_def.re_exports.get(&path) {
                     *index
@@ -691,6 +744,7 @@ impl<'input> Compiler<'input> {
         function: &mut Function,
         expr: desugared_tree::IfExpression,
         yield_value: bool,
+        inlining: bool,
     ) -> Result<(), CompileError> {
         let desugared_tree::IfExpression {
             condition,
@@ -701,7 +755,7 @@ impl<'input> Compiler<'input> {
             ..
         } = expr;
 
-        self.compile_expr(module, function, *condition, true)?;
+        self.compile_expr(module, function, *condition, true, inlining)?;
 
         let block_type = if let Some(r#type) = convert_type(&return_type).1 {
             BlockType::Result(r#type)
@@ -710,18 +764,18 @@ impl<'input> Compiler<'input> {
         };
 
         function.instruction(&Instruction::If(block_type));
-        self.compile_block(module, function, then_block, yield_value)?;
+        self.compile_block(module, function, then_block, yield_value, inlining)?;
         let elif_count = elifs.len();
         for (condition, then_block) in elifs {
             function.instruction(&Instruction::Else);
-            self.compile_expr(module, function, condition, true)?;
+            self.compile_expr(module, function, condition, true, inlining)?;
             function.instruction(&Instruction::If(block_type));
-            self.compile_block(module, function, then_block, yield_value)?;
+            self.compile_block(module, function, then_block, yield_value, inlining)?;
 
         }
         if let Some(else_block) = else_block {
             function.instruction(&Instruction::Else);
-            self.compile_block(module, function, else_block, yield_value)?;
+            self.compile_block(module, function, else_block, yield_value, inlining)?;
         }
         for _ in 0..elif_count {
             function.instruction(&Instruction::End);
@@ -730,26 +784,29 @@ impl<'input> Compiler<'input> {
 
         Ok(())
     }
-
 }
 
 
-impl<'input> Compiler<'input> {
-    fn bind_block(&mut self, block: &desugared_tree::Block) {
+impl Compiler {
+    fn bind_block(&mut self, block: &desugared_tree::Block, inline: bool) {
         self.state.push();
         for stmt in block.statements.iter() {
             match stmt {
                 desugared_tree::Statement::Let { name, r#type, expr, .. } => {
                     let ty = convert_type(&r#type).0;
-                    self.state.store(&name, ty);
+                    if inline {
+                        self.state.store(&format!("inline<{name}>"), ty);
+                    } else {
+                        self.state.store(&name, ty);
+                    }
 
-                    self.bind_expr(expr);
+                    self.bind_expr(expr, inline);
                 }
                 desugared_tree::Statement::Expression { expr, ..} => {
-                    self.bind_expr(expr);
+                    self.bind_expr(expr, inline);
                 }
                 desugared_tree::Statement::Assignment { expr, .. } => {
-                    self.bind_expr(expr);
+                    self.bind_expr(expr, inline);
                 }
                 _ => {}
             }
@@ -757,19 +814,40 @@ impl<'input> Compiler<'input> {
         self.state.pop();
     }
 
-    fn bind_expr(&mut self, expr: &desugared_tree::Expression) {
+    fn bind_expr(&mut self, expr: &desugared_tree::Expression, inline: bool) {
         match expr {
             desugared_tree::Expression::IfExpression(if_expr) => {
-                self.bind_if_expr(if_expr);
+                self.bind_if_expr(if_expr, inline);
             }
             desugared_tree::Expression::Parenthesized { expr, .. } => {
-                self.bind_expr(expr);
+                self.bind_expr(expr, true);
+            }
+            desugared_tree::Expression::FunctionCall { name, args, .. } => {
+                for arg in args {
+                    self.bind_expr(arg, true);
+                }
+                let path = name.to_vec_strings();
+                let mut module_path = name.to_vec_strings();
+                let name = module_path.pop().unwrap();
+                let def = {
+                    let module_def = self.module_to_def.get(&module_path).unwrap();
+                    let def = module_def.get_definition(&name).unwrap();
+                    def
+                };
+
+                match def.value.clone() {
+                    DefinitionValue::Function(function) => {
+                        if function.inline {
+                            self.bind_block(&function.body, true)
+                        }
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    fn bind_if_expr(&mut self, if_expr: &desugared_tree::IfExpression) {
+    fn bind_if_expr(&mut self, if_expr: &desugared_tree::IfExpression, inline: bool) {
         let desugared_tree::IfExpression {
             condition,
             then_block,
@@ -778,14 +856,14 @@ impl<'input> Compiler<'input> {
             ..
         } = if_expr;
 
-        self.bind_expr(condition.as_ref());
-        self.bind_block(then_block);
+        self.bind_expr(condition.as_ref(), inline);
+        self.bind_block(then_block, inline);
         for (condition, block) in elifs {
-            self.bind_expr(condition);
-            self.bind_block(block);
+            self.bind_expr(condition, inline);
+            self.bind_block(block, inline);
         }
         else_block.as_ref().map(|else_block| {
-            self.bind_block(else_block);
+            self.bind_block(else_block, inline);
         });
     }
 }
