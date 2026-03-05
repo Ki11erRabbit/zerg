@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use wasm_encoder::{Function, Instruction};
 use ast::{desugared_tree, Span};
 use ast::desugared_tree::{Block, Expression, IfExpression, Statement, Type};
-use crate::{compiler, Compiler};
+use crate::{compiler, CompileError, Compiler};
+use crate::compiler::{convert_type, WasmModuleGroup};
 use crate::interpreter::interpreter_state::{InterpreterState, Value};
 
 #[derive(Debug)]
@@ -14,6 +15,13 @@ pub enum InterpreterError {
         expected: String,
         found: String,
         span: Span,
+    },
+    CompileError(Box<CompileError>),
+}
+
+impl From<CompileError> for InterpreterError {
+    fn from(err: CompileError) -> InterpreterError {
+        InterpreterError::CompileError(Box::new(err))
     }
 }
 
@@ -30,11 +38,12 @@ enum InternalFunction {
 pub struct Interpreter {
     state: Vec<InterpreterState>,
     should_return: bool,
-    internal_functions: HashMap<Vec<String>, InternalFunction>
+    internal_functions: HashMap<Vec<String>, InternalFunction>,
+    inlining: bool,
 }
 
 impl Interpreter {
-    pub fn new() -> Self {
+    pub fn new(inlining: bool) -> Self {
         let mut internal_functions = HashMap::new();
         internal_functions.insert(vec![String::from("compiler"), String::from("put_instruction")], InternalFunction::PutInstruction);
         internal_functions.insert(vec![String::from("compiler"), String::from("use_variable")], InternalFunction::UseVariable);
@@ -43,7 +52,8 @@ impl Interpreter {
         Self {
             state: Vec::new(),
             should_return: false,
-            internal_functions
+            internal_functions,
+            inlining,
         }
     }
 
@@ -73,7 +83,8 @@ impl Interpreter {
 
     pub fn interpret_comptime_block(
         &mut self,
-        compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         block: Block,
     ) -> Result<(), InterpreterError> {
@@ -84,14 +95,15 @@ impl Interpreter {
             self.store(&name, Value::VariableHandle(location));
         }
 
-        self.interpret_block(compiler, function, block, &mut out)?;
+        self.interpret_block(compiler, module, function, block, &mut out)?;
         self.pop_state();
         Ok(())
     }
 
     fn interpret_block(
         &mut self,
-        compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         block: Block,
         out: &mut Value,
@@ -103,7 +115,7 @@ impl Interpreter {
             if self.should_return {
                 return Ok(Value::Unit);
             }
-            let value = self.interpret_statement(compiler, function, stmt, out)?;
+            let value = self.interpret_statement(compiler, module, function, stmt, out)?;
             if i == statements_len - 1 {
                 out_value = value;
             }
@@ -114,18 +126,19 @@ impl Interpreter {
 
     fn interpret_statement(
         &mut self,
-        compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         statement: Statement,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         match statement {
             Statement::Let { name, expr, .. } => {
-                let value = self.interpret_expr(compiler, function, expr, out)?;
+                let value = self.interpret_expr(compiler, module, function, expr, out)?;
                 self.store(&name, value);
             }
             Statement::Assignment { target, expr, .. } => {
-                let value = self.interpret_expr(compiler, function, expr, out)?;
+                let value = self.interpret_expr(compiler, module, function, expr, out)?;
                 match target {
                     Expression::Variable { name, .. } => {
                         self.store(&name, value);
@@ -134,11 +147,11 @@ impl Interpreter {
                 }
             }
             Statement::Expression { expr, .. } => {
-                let value = self.interpret_expr(compiler, function, expr, out)?;
+                let value = self.interpret_expr(compiler, module, function, expr, out)?;
                 return Ok(value);
             }
             Statement::Comptime { block, .. } => {
-                self.interpret_block(compiler, function, block, out)?;
+                self.interpret_block(compiler, module, function, block, out)?;
             }
         }
         Ok(Value::Unit)
@@ -146,15 +159,28 @@ impl Interpreter {
 
     fn interpret_expr(
         &mut self,
-        compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         expr: Expression,
         out: &mut Value,
     ) -> Result<Value, InterpreterError> {
         match expr {
             Expression::Variable { name, .. } => {
-                let value = self.get(&name).unwrap();
-                return Ok(value.clone());
+                if !self.inlining {
+                    let value = self.get(&name).unwrap();
+                    return Ok(value.clone());
+                }
+
+                if let Some(expr) = compiler.remove_inlined_var(&format!("inline<{name}>")) {
+                    // We are inlining
+                    let r#type = expr.get_type();
+                    let r#type = convert_type(&r#type).0;
+                    return Ok(Value::ExpressionHandle { r#type, expr });
+                } else {
+                    let value = self.get(&name).unwrap();
+                    return Ok(value.clone());
+                }
             }
             Expression::ConstantNumber { value, r#type, ..} => {
                 let value = match r#type {
@@ -179,13 +205,13 @@ impl Interpreter {
                 return Ok(Value::Bool(value));
             }
             Expression::Parenthesized { expr, .. } => {
-                let value = self.interpret_expr(compiler, function, *expr, out)?;
+                let value = self.interpret_expr(compiler, module, function, *expr, out)?;
                 return Ok(value);
             }
             Expression::Return { value, .. } => {
                 self.should_return = true;
                 if let Some(value) = value {
-                    let value = self.interpret_expr(compiler, function, *value, out)?;
+                    let value = self.interpret_expr(compiler, module, function, *value, out)?;
                     *out = value;
                 }
             }
@@ -198,38 +224,38 @@ impl Interpreter {
                     ..
                 } = if_expr;
 
-                let condition_value = self.interpret_expr(compiler, function, *condition, out)?;
+                let condition_value = self.interpret_expr(compiler, module, function, *condition, out)?;
                 if matches!(condition_value, Value::Bool(true)) {
-                    let out  = self.interpret_block(compiler, function, then_block, out)?;
+                    let out  = self.interpret_block(compiler, module, function, then_block, out)?;
                     return Ok(out)
                 }
                 for (condition, then_block) in elifs {
-                    let condition_value = self.interpret_expr(compiler, function, condition, out)?;
+                    let condition_value = self.interpret_expr(compiler, module, function, condition, out)?;
                     if matches!(condition_value, Value::Bool(true)) {
-                        let out  = self.interpret_block(compiler, function, then_block, out)?;
+                        let out  = self.interpret_block(compiler, module, function, then_block, out)?;
                         return Ok(out)
                     }
                 }
                 if let Some(else_block) = else_block {
-                    let out = self.interpret_block(compiler, function, then_block, out)?;
+                    let out = self.interpret_block(compiler, module, function, then_block, out)?;
                     return Ok(out)
                 }
             }
             Expression::FunctionCall { name, args, span, .. } => {
                 let args = args.into_iter()
-                    .map(|val| self.interpret_expr(compiler, function, val, out))
+                    .map(|val| self.interpret_expr(compiler, module, function, val, out))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let mut path = name.to_vec_strings();
                 if let Some(func) = self.internal_functions.get(&path) {
-                    let value = self.interpret_internal_function(compiler, function, args, *func, span)?;
+                    let value = self.interpret_internal_function(compiler, module, function, args, *func, span)?;
                     return Ok(value)
                 }
                 let name = path.pop().unwrap();
                 let def = compiler.get_module_def(&path).unwrap();
                 let comptime_function = def.get_comptime_definition(&name).unwrap();
 
-                let out = self.interpret_function(compiler, function, comptime_function.function.clone(), args)?;
+                let out = self.interpret_function(compiler, module, function, comptime_function.function.clone(), args)?;
                 return Ok(out)
             }
         }
@@ -238,7 +264,8 @@ impl Interpreter {
     
     fn interpret_function(
         &mut self,
-        compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         comptime_function: desugared_tree::Function,
         parameters: Vec<Value>
@@ -259,7 +286,7 @@ impl Interpreter {
         }
         self.push();
 
-        match self.interpret_block(compiler, function, body, &mut out) {
+        match self.interpret_block(compiler, module, function, body, &mut out) {
             Ok(value) => {
                 out = value;
             }
@@ -274,7 +301,8 @@ impl Interpreter {
 
     fn interpret_internal_function(
         &mut self,
-        _compiler: &Compiler,
+        compiler: &mut Compiler,
+        module: &mut WasmModuleGroup,
         function: &mut Function,
         parameters: Vec<Value>,
         internal_function: InternalFunction,
@@ -464,6 +492,10 @@ impl Interpreter {
             InternalFunction::UseVariable => {
                 let index = match &parameters[0] {
                     Value::VariableHandle(location) => location.get_index(),
+                    Value::ExpressionHandle { expr, .. } => {
+                        compiler.compile_expr(module, function, expr.clone(), true, false)?;
+                        return Ok(Value::Unit);
+                    }
                     x => {
                         return Err(InterpreterError::MissMatchedTypes {
                             expected: String::from("VariableHandle<T>"),

@@ -1,7 +1,7 @@
 comptime import compiler;
 
 
-pub fun (+)(x: f64, y: f64): f64 {
+pub inline fun (+)(x: f64, y: f64): f64 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -9,7 +9,7 @@ pub fun (+)(x: f64, y: f64): f64 {
     }
 }
 
-pub fun (-)(x: f64, y: f64): f64 {
+pub inline fun (-)(x: f64, y: f64): f64 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -17,7 +17,7 @@ pub fun (-)(x: f64, y: f64): f64 {
     }
 }
 
-pub fun (*)(x: f64, y: f64): f64 {
+pub inline fun (*)(x: f64, y: f64): f64 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -25,7 +25,7 @@ pub fun (*)(x: f64, y: f64): f64 {
     }
 }
 
-pub fun (/)(x: f64, y: f64): f64 {
+pub inline fun (/)(x: f64, y: f64): f64 {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -33,14 +33,14 @@ pub fun (/)(x: f64, y: f64): f64 {
     }
 }
 
-pub fun (-)(x: f64): f64 {
+pub inline fun (-)(x: f64): f64 {
     comptime {
         x.use_variable();
         put_instruction("f64.neg");
     }
 }
 
-pub fun (==)(x: f64, y: f64): bool {
+pub inline fun (==)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -48,7 +48,7 @@ pub fun (==)(x: f64, y: f64): bool {
     }
 }
 
-pub fun (!=)(x: f64, y: f64): bool {
+pub inline fun (!=)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -56,7 +56,7 @@ pub fun (!=)(x: f64, y: f64): bool {
     }
 }
 
-pub fun (<)(x: f64, y: f64): bool {
+pub inline fun (<)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -64,7 +64,7 @@ pub fun (<)(x: f64, y: f64): bool {
     }
 }
 
-pub fun (<=)(x: f64, y: f64): bool {
+pub inline fun (<=)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -72,7 +72,7 @@ pub fun (<=)(x: f64, y: f64): bool {
     }
 }
 
-pub fun (>)(x: f64, y: f64): bool {
+pub inline fun (>)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -80,7 +80,7 @@ pub fun (>)(x: f64, y: f64): bool {
     }
 }
 
-pub fun (>=)(x: f64, y: f64): bool {
+pub inline fun (>=)(x: f64, y: f64): bool {
     comptime {
         x.use_variable();
         y.use_variable();

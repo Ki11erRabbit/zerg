@@ -1,7 +1,7 @@
 comptime import compiler;
 
 
-pub fun (==)(x: bool, y: bool): bool {
+pub inline fun (==)(x: bool, y: bool): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -9,7 +9,7 @@ pub fun (==)(x: bool, y: bool): bool {
     }
 }
 
-pub fun (!=)(x: bool, y: bool): bool {
+pub inline fun (!=)(x: bool, y: bool): bool {
     comptime {
         x.use_variable();
         y.use_variable();
@@ -17,7 +17,7 @@ pub fun (!=)(x: bool, y: bool): bool {
     }
 }
 
-pub fun (!)(x: bool): bool {
+pub inline fun (!)(x: bool): bool {
     return (if x {
         false;
     } else {

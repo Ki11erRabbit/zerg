@@ -20,5 +20,5 @@ pub fun fib(n: u64): u64 {
 
 pub fun main() {
     let x: i32 = fact(12);
-    let y: u64 = fib(50);
+    let y: u64 = fib(10);
 }

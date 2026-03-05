@@ -320,7 +320,7 @@ impl ModuleDef {
     }
 }
 
-struct WasmModuleGroup {
+pub(crate) struct WasmModuleGroup {
     module: Module,
     types: TypeSection,
     functions: FunctionSection,
@@ -365,7 +365,7 @@ pub struct Compiler {
     state: FunctionState,
     current_path: Vec<String>,
     main_module: Vec<String>,
-    inlined_vars: HashMap<String, desugared_tree::Expression>
+    inlined_vars: Vec<HashMap<String, desugared_tree::Expression>>
 }
 
 impl Compiler {
@@ -375,7 +375,7 @@ impl Compiler {
             state: FunctionState::new(),
             current_path: Vec::new(),
             main_module: Vec::new(),
-            inlined_vars: HashMap::new()
+            inlined_vars: Vec::new(),
         }
     }
 
@@ -394,6 +394,27 @@ impl Compiler {
             }
         }
         out
+    }
+    
+    pub fn push_inlined_vars(&mut self) {
+        self.inlined_vars.push(HashMap::new());
+    }
+    
+    pub fn pop_inlined_vars(&mut self) {
+        self.inlined_vars.pop();
+    }
+    
+    pub fn set_inlined_var(&mut self, name: String, value: desugared_tree::Expression) {
+        self.inlined_vars.last_mut().map(|last| last.insert(name, value));
+    }
+    
+    pub fn remove_inlined_var(&mut self, name: &str) -> Option<desugared_tree::Expression> {
+        for scope in self.inlined_vars.iter_mut().rev() {
+            if let Some(last) = scope.remove(name) {
+                return Some(last);
+            }
+        }
+        None
     }
 
     fn load_files(&mut self, files: Vec<desugared_tree::File>, wasm_module: &mut WasmModuleGroup) {
@@ -584,15 +605,15 @@ impl Compiler {
                 }
             }
             desugared_tree::Statement::Comptime { block, .. } => {
-                let mut interpreter = Interpreter::new();
-                interpreter.interpret_comptime_block(self, function, block)?;
+                let mut interpreter = Interpreter::new(inlining);
+                interpreter.interpret_comptime_block(self, module, function, block)?;
             }
         }
 
         Ok(())
     }
 
-    fn compile_expr(
+    pub(crate) fn compile_expr(
         &mut self,
         module: &mut WasmModuleGroup,
         function: &mut Function,
@@ -611,7 +632,7 @@ impl Compiler {
                     if let Some(index) = self.state.get(&inlined_name) {
                         function.instruction(&Instruction::LocalGet(index));
                     } else {
-                        let Some(expr) = self.inlined_vars.remove(&inlined_name) else {
+                        let Some(expr) = self.remove_inlined_var(&inlined_name) else {
                             return Ok(())
                         };
                         self.compile_expr(module, function, expr, yield_value, false)?;
@@ -692,12 +713,15 @@ impl Compiler {
                     match def.value.clone() {
                         DefinitionValue::Function(fun) => {
                             if fun.inline {
+                                self.push_inlined_vars();
                                 for (arg, expr) in fun.arguments.iter().zip(args.into_iter()) {
-                                    self.inlined_vars.insert(format!("inline<{}>", arg.name), expr);
+                                    self.set_inlined_var(format!("inline<{}>", arg.name), expr);
                                 }
                                 let body = fun.body.clone();
 
-                                return self.compile_block(module, function, body, yield_value, true);
+                                let result = self.compile_block(module, function, body, yield_value, true);
+                                self.pop_inlined_vars();
+                                return result;
                             }
                         }
                     }
@@ -870,7 +894,7 @@ impl Compiler {
 
 
 
-fn convert_type(r#type: &desugared_tree::Type) -> (Type, Option<ValType>) {
+pub fn convert_type(r#type: &desugared_tree::Type) -> (Type, Option<ValType>) {
     match r#type {
         desugared_tree::Type::I8(_) => (Type::I8, Some(ValType::I32)),
         desugared_tree::Type::I16(_) => (Type::I16, Some(ValType::I32)),

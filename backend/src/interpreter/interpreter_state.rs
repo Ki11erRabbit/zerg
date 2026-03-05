@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use ast::desugared_tree;
 use crate::{compiler, VariableLocation};
+use crate::compiler::Type;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Bool(bool),
     U8(u8),
@@ -17,6 +19,10 @@ pub enum Value {
     Unit,
     String(String),
     VariableHandle(VariableLocation),
+    ExpressionHandle {
+        r#type: Type,
+        expr: desugared_tree::Expression
+    }
 }
 
 impl Value {
@@ -57,6 +63,23 @@ impl Value {
                     VariableLocation::F32(_) => String::from("VariableHandle<f32>"),
                     VariableLocation::F64(_) => String::from("VariableHandle<f64>"),
                 }
+            }
+            Value::ExpressionHandle { r#type, .. } => {
+                let mut out = String::from("ExpressionHandle<");
+                match r#type {
+                    compiler::Type::Bool => out.push_str("bool"),
+                    compiler::Type::U8 => out.push_str("u8"),
+                    compiler::Type::I8 => out.push_str("i8"),
+                    compiler::Type::U16 => out.push_str("u16"),
+                    compiler::Type::I16 => out.push_str("i16"),
+                    compiler::Type::U32 => out.push_str("u32"),
+                    compiler::Type::I32 => out.push_str("i32"),
+                    compiler::Type::U64 => out.push_str("u64"),
+                    compiler::Type::I64 => out.push_str("i64"),
+                    _ => unreachable!()
+                }
+                out.push('>');
+                out
             }
         }
     }

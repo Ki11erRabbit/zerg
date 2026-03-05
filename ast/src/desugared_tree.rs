@@ -152,6 +152,21 @@ pub enum Expression {
     IfExpression(IfExpression),
 }
 
+impl Expression {
+    pub fn get_type(&self) -> Type {
+        match self {
+            Expression::Return {..} => Type::Unit(Span::new(0,0 )),
+            Expression::Parenthesized { expr, ..} => expr.get_type(),
+            Expression::Variable { r#type, .. } => r#type.clone(),
+            Expression::ConstantNumber { r#type, .. } => r#type.clone(),
+            Expression::ConstantString { .. } => Type::String(Span::new(0,0 )),
+            Expression::ConstantBool { .. } => Type::Bool(Span::new(0,0 )),
+            Expression::FunctionCall { return_type, .. } => return_type.clone(),
+            Expression::IfExpression(expr) => expr.return_type.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IfExpression {
     pub condition: Box<Expression>,
