@@ -21,7 +21,6 @@ extern {
         "import" => lexer::Token::Import,
         "pub" => lexer::Token::Public,
         "inline" => lexer::Token::Inline,
-        "lazy" => lexer::Token::Lazy,
         "comptime" => lexer::Token::Comptime,
         "extern" => lexer::Token::Extern,
         "->" => lexer::Token::Arrow,
@@ -179,8 +178,8 @@ FunctionKind: FunctionKind<'input> = {
 };
 
 FunctionArgument: FunctionArgument<'input> = {
-    <start: @L> <lazy:("lazy")?> <id:Identifier> ":" <ty: Type> <end: @R> => {
-        FunctionArgument::new(lazy.is_some(), id, ty, Span::new(start, end))
+    <start: @L> <id:Identifier> ":" <ty: Type> <end: @R> => {
+        FunctionArgument::new(id, ty, Span::new(start, end))
     },
 };
 

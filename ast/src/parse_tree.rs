@@ -167,15 +167,14 @@ impl<'input> FunctionArguments<'input> {
 
 #[derive(Debug, Clone)]
 pub struct FunctionArgument<'input> {
-    pub lazy: bool,
     pub name: Cow<'input, str>,
     pub r#type: Type<'input>,
     pub span: Span,
 }
 
 impl<'input> FunctionArgument<'input> {
-    pub fn new(lazy: bool, name: Cow<'input, str>, r#type: Type<'input>, span: Span) -> Self {
-        FunctionArgument { lazy, name, r#type, span }
+    pub fn new(name: Cow<'input, str>, r#type: Type<'input>, span: Span) -> Self {
+        FunctionArgument { name, r#type, span }
     }
 }
 

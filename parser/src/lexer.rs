@@ -34,7 +34,6 @@ pub enum Token<'input> {
     Import,
     Public,
     Inline,
-    Lazy,
     Comptime,
     Extern,
     // Symbols
@@ -300,7 +299,6 @@ impl<'input> Lexer<'input> {
                          "import" => Some(Ok((start, Token::Import,  end))),
                          "pub" => Some(Ok((start, Token::Public,  end))),
                          "inline" => Some(Ok((start, Token::Inline,  end))),
-                         "lazy" => Some(Ok((start, Token::Lazy,  end))),
                          "comptime" => Some(Ok((start, Token::Comptime,  end))),
                          "extern" => Some(Ok((start, Token::Extern,  end))),
                          "true" => Some(Ok((start, Token::Bool(true), end))),

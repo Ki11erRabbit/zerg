@@ -48,7 +48,6 @@ impl FunctionArguments {
 
 #[derive(Debug, Clone)]
 pub struct FunctionArgument {
-    pub lazy: bool,
     pub name: String,
     pub r#type: Type,
     pub span: Span,

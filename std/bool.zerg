@@ -25,7 +25,7 @@ pub inline fun (!)(x: bool): bool {
     });
 }
 
-pub inline fun (||)(x: bool, lazy y: bool): bool {
+pub inline fun (||)(x: bool, y: bool): bool {
     return (if x {
         true;
     } elif y {
@@ -35,7 +35,7 @@ pub inline fun (||)(x: bool, lazy y: bool): bool {
     });
 }
 
-pub inline fun (&&)(x: bool, lazy y: bool): bool {
+pub inline fun (&&)(x: bool, y: bool): bool {
     return (if x {
         if y {
             true;

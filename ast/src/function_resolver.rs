@@ -1735,11 +1735,10 @@ impl FunctionResolver {
         let arguments = arguments.into_iter()
             .map(|arg| {
                 let parse_tree::FunctionArgument {
-                    lazy, name, r#type, span
+                    name, r#type, span
                 } = arg;
 
                 desugared_tree::FunctionArgument {
-                    lazy,
                     name: name.to_string(),
                     r#type: Self::translate_type(r#type),
                     span
