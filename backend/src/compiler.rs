@@ -331,6 +331,7 @@ pub(crate) struct WasmModuleGroup {
     names: NameSection,
     function_name_map: NameMap,
     next_function_index: u32,
+    next_export_index: u32,
 }
 
 impl WasmModuleGroup {
@@ -356,7 +357,14 @@ impl WasmModuleGroup {
             names,
             function_name_map,
             next_function_index: 0,
+            next_export_index: 1,
         }
+    }
+
+    pub fn get_next_export_index(&mut self) -> u32 {
+        let out = self.next_export_index;
+        self.next_export_index += 1;
+        out
     }
 }
 
@@ -515,9 +523,11 @@ impl Compiler {
 
     fn compile_function(&mut self, module: &mut WasmModuleGroup, function: desugared_tree::Function) -> Result<(), CompileError> {
         let desugared_tree::Function {
+            public,
             comptime,
             arguments,
             body,
+            path,
             ..
         } = function;
         if comptime {
@@ -537,6 +547,11 @@ impl Compiler {
         self.state.clear();
 
         module.code.function(&function);
+
+        let module_def = self.module_to_def.get(&self.current_path).unwrap();
+        let def = module_def.get_definition(&path.to_vec_strings().last().unwrap()).unwrap();
+
+        module.exports.export(&path.to_vec_strings().join("::"), ExportKind::Func, def.def_index);
 
         Ok(())
     }
