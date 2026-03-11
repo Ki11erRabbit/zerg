@@ -331,7 +331,6 @@ pub(crate) struct WasmModuleGroup {
     names: NameSection,
     function_name_map: NameMap,
     next_function_index: u32,
-    next_export_index: u32,
 }
 
 impl WasmModuleGroup {
@@ -357,14 +356,7 @@ impl WasmModuleGroup {
             names,
             function_name_map,
             next_function_index: 0,
-            next_export_index: 1,
         }
-    }
-
-    pub fn get_next_export_index(&mut self) -> u32 {
-        let out = self.next_export_index;
-        self.next_export_index += 1;
-        out
     }
 }
 
@@ -548,10 +540,10 @@ impl Compiler {
 
         module.code.function(&function);
 
-        let module_def = self.module_to_def.get(&self.current_path).unwrap();
+        /*let module_def = self.module_to_def.get(&self.current_path).unwrap();
         let def = module_def.get_definition(&path.to_vec_strings().last().unwrap()).unwrap();
 
-        module.exports.export(&path.to_vec_strings().join("::"), ExportKind::Func, def.def_index);
+        module.exports.export(&path.to_vec_strings().join("::"), ExportKind::Func, def.def_index);*/
 
         Ok(())
     }
