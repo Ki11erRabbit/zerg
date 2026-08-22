@@ -1,9 +1,0 @@
-
-
-fun recurse() {
-    recurse();
-}
-
-pub fun main() {
-    recurse();
-}
